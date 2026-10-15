@@ -1,0 +1,96 @@
+openapi: 3.1.0
+info:
+  title: Voice Foundry Control API
+  version: 0.1.0
+  description: Prepare and approve outbound voice-agent calls. Consequential actions require separate approval.
+servers:
+  - url: https://YOUR_PUBLIC_HOST
+security:
+  - ApiKeyAuth: []
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: X-API-Key
+  schemas:
+    PlanRequest:
+      type: object
+      required: [message, phone]
+      properties:
+        agent_id: {type: string, default: receptionist}
+        phone: {type: string, description: E.164 destination number}
+        message: {type: string, description: Requested call goals and constraints}
+    CallRequest:
+      type: object
+      required: [plan_id, confirm]
+      properties:
+        plan_id: {type: string}
+        confirm: {type: boolean, description: Must be true only after explicit operator approval}
+paths:
+  /api/agents:
+    get:
+      operationId: listVoiceAgents
+      summary: List available AI call agents
+      responses:
+        '200': {description: Agents returned}
+  /api/plans:
+    get:
+      operationId: listCallPlans
+      summary: List recent call plans
+      responses:
+        '200': {description: Plans returned}
+    post:
+      operationId: prepareCallPlan
+      summary: Draft a call plan without dialing
+      x-openai-isConsequential: false
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PlanRequest'}
+      responses:
+        '201': {description: Draft created, no call placed}
+  /api/calls:
+    get:
+      operationId: listVoiceCalls
+      summary: List latest calls and statuses
+      responses:
+        '200': {description: Calls returned}
+    post:
+      operationId: initiateApprovedCall
+      summary: Place a call only after explicit approval
+      description: Actual PSTN charges apply in live mode. Ask for approval before calling.
+      x-openai-isConsequential: true
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CallRequest'}
+      responses:
+        '201': {description: Call created or simulated}
+        '403': {description: Recipient not allowlisted}
+        '409': {description: Plan already used}
+  /api/calls/{call_id}:
+    get:
+      operationId: inspectVoiceCall
+      summary: Read call status and transcript
+      parameters:
+        - name: call_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Call record and transcript events}
+  /api/calls/{call_id}/hangup:
+    post:
+      operationId: endVoiceCall
+      summary: End an active phone call or simulation
+      x-openai-isConsequential: true
+      parameters:
+        - name: call_id
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Call ended}

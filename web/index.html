@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#0a0c13" />
+<title>Voice Foundry · Command center</title>
+<link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+<link rel="stylesheet" href="/assets/styles.css" />
+</head>
+<body>
+<div id="auth-overlay" class="auth-overlay">
+  <section class="auth-card">
+    <div class="logo giant"><span class="logomark">⌁</span><span>Voice<span class="accent">Foundry</span></span></div>
+    <p class="eyebrow">YOUR VOICE OPERATIONS CENTER</p>
+    <h1>Make every call<br/><em>intentional.</em></h1>
+    <p class="muted">Enter the <code>APP_API_KEY</code> from your local <code>.env</code> file. The key stays in this browser tab.</p>
+    <form id="auth-form"><label>Workspace access key<input id="auth-input" type="password" autocomplete="off" placeholder="Paste APP_API_KEY" required /></label><button class="btn primary wide" type="submit">Unlock workspace <span>↗</span></button></form>
+    <p class="auth-error" id="auth-error"></p><p class="tiny muted">First launch? Default key is in <code>.env.example</code>. Change it before exposing the app online.</p>
+  </section>
+</div>
+<div class="app-shell" id="app" hidden>
+  <aside class="sidebar">
+    <a class="logo" href="#dashboard"><span class="logomark">⌁</span><span>Voice<span class="accent">Foundry</span></span></a>
+    <div class="workspace-identity"><span class="workspace-avatar">VF</span><div><strong>My workspace</strong><small>Personal command center</small></div><span class="chevron">⌄</span></div>
+    <p class="nav-heading">WORKSPACE</p>
+    <nav class="nav-links" aria-label="Primary navigation">
+      <button class="nav-item active" data-page="dashboard"><span>▦</span> Overview</button>
+      <button class="nav-item" data-page="compose"><span>⌁</span> Call studio</button>
+      <button class="nav-item" data-page="history"><span>◷</span> Call history</button>
+      <button class="nav-item" data-page="agents"><span>◈</span> Your agents</button>
+      <button class="nav-item" data-page="settings"><span>⚙</span> Configuration</button>
+    </nav>
+    <div class="sidebar-bottom"><div class="online-dot"></div><div><strong id="runtime-label">Preview environment</strong><small id="model-label">Connecting...</small></div></div>
+    <button class="sidebar-help" id="logout-btn">Sign out of workspace <span>↗</span></button>
+  </aside>
+  <main class="main-content">
+    <header class="topbar"><div class="crumb">WORKSPACE <span>/</span> <strong id="breadcrumb">Overview</strong></div><div class="top-actions"><span class="mode-chip" id="mode-chip">● Demo mode</span><span class="top-avatar">VF</span></div></header>
+    <div class="content-wrap">
+      <section id="page-dashboard" class="page">
+        <div class="page-hero"><div><p class="eyebrow">VOICE OPERATIONS, SIMPLIFIED</p><h1>Good conversations<br/>start with <em>clear intent.</em></h1><p class="muted">Brief an agent, shape the agenda, and make calls with full oversight.</p><button class="btn primary hero-cta" data-goto="compose">Create a new call <span>↗</span></button></div><div class="hero-art" aria-hidden="true"><div class="orbit outer"></div><div class="orbit inner"></div><div class="orb"><span>⌁</span></div><div class="orb-text">VOICE ENGINE <span>·</span> ONLINE</div></div></div>
+        <div class="section-row"><h2>Workspace pulse</h2><span class="muted small">Your activity at a glance</span></div>
+        <div class="stats-grid"><div class="stat-card"><span class="stat-icon">◷</span><small>All calls</small><strong id="stat-total">0</strong><span class="stat-note">Lifetime activity</span></div><div class="stat-card"><span class="stat-icon">↗</span><small>Completed</small><strong id="stat-done">0</strong><span class="stat-note">Calls finished</span></div><div class="stat-card"><span class="stat-icon">◈</span><small>Active agents</small><strong id="stat-agents">1</strong><span class="stat-note">Available to assign</span></div><div class="stat-card"><span class="stat-icon">◇</span><small>Call plans</small><strong id="stat-plans">0</strong><span class="stat-note">Agendas generated</span></div></div>
+        <div class="dashboard-grid"><div class="panel"><div class="panel-head"><h3>Recent calls</h3><button class="text-btn" data-goto="history">View all →</button></div><div id="recent-calls"></div></div><div class="panel start-panel"><div class="tiny-orb">⌁</div><p class="eyebrow">QUICK START</p><h3>Give your agent<br/>a mission.</h3><p class="muted">Describe what to say. Your agent transforms it into an agenda that you review before dialing.</p><button class="btn dark" data-goto="compose">Open call studio ↗</button></div></div>
+      </section>
+      <section id="page-compose" class="page" hidden>
+        <div class="page-title"><p class="eyebrow">MISSION CONTROL / NEW CALL</p><h1>Call <em>studio.</em></h1><p class="muted">The briefing room for every conversation.</p></div>
+        <div class="studio-layout"><div class="panel chat-panel"><div class="chat-head"><span class="chat-avatar">⌁</span><div><strong>Call planning assistant</strong><small><span class="online-dot inline"></span> Ready to prepare a call</small></div><span class="quiet-badge">PLANNING</span></div><div class="chat-feed" id="chat-feed"><div class="chat-intro"><div class="tiny-orb">⌁</div><h3>What's the mission?</h3><p>Tell me who to call and what you'd like to achieve. I'll prepare a structured agenda before anything is dialed.</p><button class="suggestion" data-suggestion="Call and politely ask whether they are available for a dental appointment tomorrow. Collect their preferred time but don't claim a booking was made.">↗ Appointment confirmation</button><button class="suggestion" data-suggestion="Call to follow up on a service inquiry. Ask whether they need additional information and record their response.">↗ Customer follow-up</button></div></div>
+            <form id="plan-form" class="chat-compose"><div class="fields-row"><label>Recipient phone (E.164)<input id="phone-input" placeholder="+14155552671" required /></label><label>Agent<select id="agent-select"></select></label></div><div class="compose-box"><textarea id="message-input" rows="3" placeholder="Describe the goal, context, tone, constraints, and questions to ask..." required></textarea><div class="compose-actions"><span class="tiny muted">Plans require approval before calling</span><button class="btn primary" type="submit" id="plan-btn">Create plan <span>↗</span></button></div></div></form>
+          </div>
+          <div class="panel inspector"><div class="panel-head"><h3>Call inspector</h3><span class="quiet-badge" id="plan-status">NO PLAN</span></div><div id="plan-empty" class="inspector-empty"><div class="empty-symbol">◇</div><h3>Nothing drafted yet</h3><p>Create a call plan to review its objectives, agenda, and opening message.</p></div><div id="plan-editor" hidden><div class="inspect-meta"><span>RECIPIENT</span><strong id="inspect-phone">—</strong></div><label class="edit-field">Primary goal<textarea id="edit-goal" rows="3"></textarea></label><label class="edit-field">Agenda <span class="muted tiny">One step per line</span><textarea id="edit-agenda" rows="8"></textarea></label><label class="edit-field">Opening message<textarea id="edit-script" rows="3"></textarea></label><div class="actions-column"><button class="btn outline wide" id="save-plan-btn">Save changes</button><button class="btn primary wide" id="call-btn">Approve &amp; <span id="dial-verb">start preview</span> ↗</button></div><p class="tiny muted inspector-hint">A voice agent should never call without operator approval. Recipients must be authorized for outbound calls.</p></div></div></div>
+      </section>
+      <section id="page-history" class="page" hidden><div class="page-title"><p class="eyebrow">AUDIT TRAIL</p><h1>Call <em>history.</em></h1><p class="muted">Call states, transcriptions, and results in one place.</p></div><div class="history-layout"><div class="panel history-list"><div class="panel-head"><h3>All calls</h3><button class="text-btn" id="refresh-btn">Refresh ↻</button></div><div id="history-items"></div></div><div class="panel call-detail"><div class="panel-head"><h3>Conversation record</h3><span class="quiet-badge" id="detail-status">SELECT A CALL</span></div><div id="call-detail-body" class="inspector-empty"><div class="empty-symbol">◷</div><h3>Select a conversation</h3><p>View the agenda, transcript, and call lifecycle here.</p></div></div></div></section>
+      <section id="page-agents" class="page" hidden><div class="page-title"><p class="eyebrow">YOUR DIGITAL WORKFORCE</p><h1>Agent <em>directory.</em></h1><p class="muted">Give each agent a responsibility, voice style, and working instructions.</p></div><div class="agent-layout"><div class="panel"><div class="panel-head"><h3>Configured agents</h3><span class="quiet-badge" id="agent-count">0 AGENTS</span></div><div id="agent-list"></div></div><div class="panel"><div class="panel-head"><h3>Create agent</h3></div><form class="agent-form" id="agent-form"><label>Agent name<input name="name" placeholder="e.g. Mira" maxlength="64" required /></label><label>Role<input name="role" placeholder="e.g. Clinic receptionist" maxlength="120" required /></label><label>Language<input name="language" value="English" maxlength="64" required /></label><label>Instructions<textarea name="instructions" rows="6" minlength="10" maxlength="4000" required placeholder="Be respectful, brief, and clear. Ask one question at a time..."></textarea></label><button type="submit" class="btn primary wide">Add agent ↗</button></form><p class="tiny muted">Current Deepgram Aura default supports English speech output. Other languages require a compatible TTS configuration.</p></div></div></section>
+      <section id="page-settings" class="page" hidden><div class="page-title"><p class="eyebrow">UNDER THE HOOD</p><h1>Workspace <em>settings.</em></h1><p class="muted">Connection health and operating limits. Secrets stay in your .env, not in the browser.</p></div><div class="settings-grid"><div class="panel settings-panel"><div class="panel-head"><h3>Service readiness</h3><span class="online-dot"></span></div><div id="settings-readiness"></div></div><div class="panel settings-panel"><div class="panel-head"><h3>Setup checklist</h3></div><div class="setup-row"><b>01</b><span>Copy <code>.env.example</code> to <code>.env</code></span></div><div class="setup-row"><b>02</b><span>Configure Twilio, OpenAI, and Deepgram keys</span></div><div class="setup-row"><b>03</b><span>Set PUBLIC_BASE_URL to your HTTPS tunnel</span></div><div class="setup-row"><b>04</b><span>Allowlist recipients, set DEMO_MODE=false</span></div><div class="setup-row"><b>05</b><span>Call a number or connect Twilio's incoming webhook</span></div><p class="tiny muted">Full instructions are in README.md and docs/LOCAL_SETUP.md.</p></div></div></section>
+    </div>
+    <footer>VOICE FOUNDRY <span>·</span> LOCAL-FIRST AGENT OPERATIONS <span>·</span> VERSION 0.1</footer>
+  </main>
+</div>
+<div id="toast" role="status" class="toast" hidden></div>
+<script src="/assets/app.js" defer></script>
+</body></html>

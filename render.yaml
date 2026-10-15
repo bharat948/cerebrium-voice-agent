@@ -1,0 +1,49 @@
+# Voice Foundry on Render.
+# This Blueprint intentionally uses a PAID web service: live telephone calls should
+# not depend on an instance that spins down after 15 minutes of inactivity.
+# Review pricing in Render before syncing this Blueprint.
+services:
+  - type: web
+    name: voice-foundry
+    runtime: docker
+    plan: starter
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /health
+    numInstances: 1
+    disk:
+      name: voice-foundry-data
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: PORT
+        value: "8000"
+      - key: APP_ENV
+        value: production
+      - key: APP_API_KEY
+        generateValue: true
+      - key: DEMO_MODE
+        value: "true"
+      - key: DB_PATH
+        value: /data/voice_foundry.db
+      - key: PUBLIC_BASE_URL
+        fromService:
+          type: web
+          name: voice-foundry
+          envVarKey: RENDER_EXTERNAL_URL
+      - key: TWILIO_VALIDATE_SIGNATURES
+        value: "true"
+      - key: TWILIO_ALLOW_INBOUND
+        value: "true"
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: DEEPGRAM_STT_MODEL
+        value: nova-3
+      - key: DEEPGRAM_TTS_MODEL
+        value: aura-2-thalia-en
+      - key: MAX_CALL_SECONDS
+        value: "300"
+      - key: MAX_CONCURRENT_CALLS
+        value: "2"
+      - key: MAX_CALLS_PER_HOUR
+        value: "10"
