@@ -140,3 +140,33 @@ This is for **disposable previewing only**. Free instances spin down after inact
 - https://render.com/docs/disks
 - https://render.com/docs/free
 - https://www.twilio.com/docs/voice/twiml/stream
+
+## Dashboard error: `Unable to generate plan (HTTPStatusError)`
+
+This message (from the first release) means the **OpenAI Chat Completions API rejected
+our call-planning request**; it is not a Render Blueprint-generation problem.
+
+1. Go to **Render > Web Service > Logs**, press **Create Plan** again, and locate
+   `Plan generation error`. In the first release, the log exception contains an
+   HTTP status, for example `401 Unauthorized` or `429 Too Many Requests`.
+2. Go to **Render > Environment**. Configure `OPENAI_API_KEY` with a valid
+   [OpenAI API platform](https://platform.openai.com/api-keys) key; ensure
+   `OPENAI_MODEL=gpt-4o-mini`. A ChatGPT Plus subscription does **not** pay for
+   OpenAI API usage. Review [API billing](https://platform.openai.com/settings/organization/billing/overview)
+   separately. Save/deploy the configuration changes.
+3. Try again. The updated repository shows a sanitized HTTP status/error code
+   plus a next action in the dashboard rather than the opaque `HTTPStatusError`.
+
+| OpenAI HTTP status | Common reason | Next action |
+| --- | --- | --- |
+| 401 | Bad or revoked API key | Replace `OPENAI_API_KEY` |
+| 429 | No credits, spend limit, or request rate limit | Check API billing and limits; use error code to distinguish |
+| 400 | Model or request parameter incompatible | Verify `OPENAI_MODEL=gpt-4o-mini` |
+| 403/404 | Access or model availability issue | Review project/model permissions |
+
+If you only want to test the dashboard without OpenAI, delete/clear
+`OPENAI_API_KEY` and set `DEMO_MODE=true`. The app builds a **template agenda**
+instead of contacting OpenAI. Keep `DEMO_MODE=true` until live credentials are tested.
+This does not perform real calls.
+
+Do **not** paste API keys, auth tokens, or other secrets in screenshots or support requests.

@@ -15,7 +15,7 @@ from twilio.twiml.voice_response import VoiceResponse
 from app import db
 from app.config import get_settings
 from app.models import AgentCreate, CallRequest, PlanEdit, PlanRequest, PreviewTurn, valid_phone
-from app.planner import build_plan, extract_phone, preview_reply, openai_completion
+from app.planner import build_plan, extract_phone, preview_reply, openai_completion, OpenAIProviderError
 from app.prompts import call_system_prompt
 from app.security import require_api_key, require_twilio_http, allow_twilio_websocket
 from app.voice import VoiceSession
@@ -103,9 +103,12 @@ async def create_plan(payload: PlanRequest):
         raise HTTPException(422, 'Provide recipient phone in E.164 format, e.g. +14155552671')
     try:
         result = await build_plan(payload.message, get_settings())
-    except Exception as exc:
-        log.exception('Plan generation error')
-        raise HTTPException(502, f'Unable to generate plan ({type(exc).__name__})')
+    except OpenAIProviderError as exc:
+        log.warning('Plan generation provider failure: status=%s code=%s', exc.status_code, exc.code)
+        raise HTTPException(502, f'Unable to generate plan: {exc}') from None
+    except Exception:
+        log.exception('Unexpected plan generation failure')
+        raise HTTPException(502, 'Unable to generate plan. Check Render logs.') from None
     return db.insert_plan(payload.agent_id, phone, result['goal'], result['agenda'], result['script'], payload.message)
 
 

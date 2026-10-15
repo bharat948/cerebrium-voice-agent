@@ -207,3 +207,10 @@ The Cerebrium article demonstrates Pipecat in a managed compute environment. Thi
 ## License
 
 MIT, see `LICENSE`.
+
+### Render planning API troubleshooting
+
+If **Create Plan** displays `Unable to generate plan (HTTPStatusError)`,
+this is an OpenAI API error, not a Render Blueprint error. See
+[Render deployment troubleshooting](docs/RENDER_DEPLOY.md#dashboard-error-unable-to-generate-plan-httpstatuserror).
+The updated code reports an actionable, sanitized status code without exposing credentials.

@@ -83,3 +83,18 @@ def test_twilio_rejects_unsigned_webhook(client):
     assert response.status_code==403
     response=client.post('/twilio/status',data={'CallSid':'CAinvalid','CallStatus':'completed'})
     assert response.status_code==403
+
+
+def test_plan_route_exposes_safe_diagnostic(client, monkeypatch):
+    from app import main, planner
+
+    async def fail(_message, _settings):
+        raise planner.OpenAIProviderError(429, 'insufficient_quota')
+
+    monkeypatch.setattr(main, 'build_plan', fail)
+    response = client.post('/api/plans', headers={'X-API-Key': 'test-key-not-public'}, json={
+        'phone': '+14155552671', 'agent_id': 'receptionist', 'message': 'Ask about availability.'
+    })
+    assert response.status_code == 502
+    assert '429' in response.json()['detail']
+    assert 'billing' in response.json()['detail'].lower()

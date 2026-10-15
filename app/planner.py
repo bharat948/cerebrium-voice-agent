@@ -7,6 +7,39 @@ from app.models import valid_phone
 PHONE_IN_TEXT = re.compile(r'\+[1-9]\d{7,14}')
 
 
+class OpenAIProviderError(Exception):
+    """Safe, actionable OpenAI failure without exposing provider response bodies or keys."""
+
+    def __init__(self, status_code: int | None, code: str = ''):
+        self.status_code = status_code
+        self.code = code if re.fullmatch(r'[a-zA-Z0-9_-]{1,64}', code) else ''
+        if status_code == 401:
+            action = 'Check OPENAI_API_KEY in Render > Environment; generate a new API key if necessary.'
+        elif status_code == 403:
+            action = 'Check that your API project has permission to use OPENAI_MODEL.'
+        elif status_code == 404:
+            action = 'Check OPENAI_MODEL and whether that model is available to your API project.'
+        elif status_code == 429:
+            if self.code in {
+                'insufficient_quota', 'credit_balance_exhausted',
+                'organization_spend_limit_exceeded', 'project_spend_limit_exceeded',
+                'organization_usage_limit_exceeded',
+            }:
+                action = 'Check OpenAI API billing, prepaid credits, and project usage limits (separate from ChatGPT).'
+            else:
+                action = 'Check OpenAI API rate limits, credit balance, and project spending limits.'
+        elif status_code == 400:
+            action = 'Check OPENAI_MODEL and its Chat Completions request compatibility.'
+        elif status_code is None:
+            action = 'Check network connectivity to api.openai.com and try again.'
+        else:
+            action = 'Check OpenAI service status and Render logs, then retry.'
+        label = f'OpenAI API HTTP {status_code}' if status_code else 'OpenAI connection failure'
+        if self.code:
+            label += f' ({self.code})'
+        super().__init__(f'{label}. {action}')
+
+
 def extract_phone(text: str, supplied: str) -> str:
     if supplied:
         return supplied.strip()
@@ -36,7 +69,7 @@ async def build_plan(message: str, settings: Settings) -> dict:
         'model': settings.openai_model,
         'response_format': {'type': 'json_object'},
         'temperature': 0.25,
-        'max_tokens': 480,
+        'max_completion_tokens': 480,
         'messages': [
             {'role': 'system', 'content': (
                 'Return a JSON object with exactly goal (string), agenda (array of 3-6 short strings), '
@@ -73,8 +106,21 @@ async def preview_reply(history: list[dict], system: str, settings: Settings) ->
 
 
 async def openai_completion(api_key: str, payload: dict) -> dict:
-    async with httpx.AsyncClient(timeout=25.0) as client:
-        response = await client.post('https://api.openai.com/v1/chat/completions',
-                                     headers={'Authorization': 'Bearer ' + api_key}, json=payload)
-        response.raise_for_status()
-        return response.json()
+    try:
+        async with httpx.AsyncClient(timeout=25.0) as client:
+            response = await client.post('https://api.openai.com/v1/chat/completions',
+                                         headers={'Authorization': 'Bearer ' + api_key}, json=payload)
+            response.raise_for_status()
+            return response.json()
+    except httpx.HTTPStatusError as exc:
+        # Never expose the full provider response or request headers in API errors.
+        code = ''
+        try:
+            error = exc.response.json().get('error', {})
+            if isinstance(error, dict):
+                code = str(error.get('code') or error.get('type') or '')
+        except (ValueError, TypeError, AttributeError):
+            pass
+        raise OpenAIProviderError(exc.response.status_code, code) from None
+    except httpx.RequestError:
+        raise OpenAIProviderError(None) from None
