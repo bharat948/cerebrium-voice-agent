@@ -1,3 +1,5 @@
+> **v0.2 GPT-Live update:** The original implementation remains available; see [GPT-Live Upgrade](GPT_LIVE_UPGRADE.md) for the new default engine, API differences, selection, Render migration and validation.
+
 # Deploy Voice Foundry to Render (no tunnel or laptop server required)
 
 The `render.yaml` in this repository is a **one-service paid Render Blueprint** that runs both the dashboard and the FastAPI WebSocket voice runtime in the same Docker container. You do NOT need ngrok, Cloudflare Tunnel, Docker Desktop, SSH access, or a permanently running laptop. Twilio and browsers connect directly to your public Render HTTPS/WSS address.
@@ -170,3 +172,8 @@ instead of contacting OpenAI. Keep `DEMO_MODE=true` until live credentials are t
 This does not perform real calls.
 
 Do **not** paste API keys, auth tokens, or other secrets in screenshots or support requests.
+
+
+## v0.2: Switch an existing Render service to GPT-Live
+
+Do not create a second service. Push the v0.2 repository to the *same GitHub repo* and redeploy. Set `VOICE_ENGINE=openai_live`, `OPENAI_LIVE_MODEL=gpt-live-1`, `OPENAI_LIVE_VOICE=marin`, `OPENAI_LIVE_BACKEND_MODEL=gpt-4o-mini`. Keep current Twilio number, `PUBLIC_BASE_URL`, and disk. `DEEPGRAM_API_KEY` is now optional for GPT-Live calls. See [migration and testing](GPT_LIVE_UPGRADE.md).

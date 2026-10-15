@@ -18,6 +18,13 @@ class Settings(BaseSettings):
     allowed_outbound_numbers: str = ''
     openai_api_key: str = ''
     openai_model: str = 'gpt-4o-mini'
+    # Selectable per call. Existing deployments without VOICE_ENGINE automatically use Live.
+    voice_engine: str = 'openai_live'
+    openai_live_model: str = 'gpt-live-1'
+    openai_live_voice: str = 'marin'
+    openai_live_backend_model: str = 'gpt-4o-mini'
+    live_barge_in_rms: int = 900
+    live_barge_in_frames: int = 5
     openai_max_output_tokens: int = 220
     deepgram_api_key: str = ''
     deepgram_stt_model: str = 'nova-3'
@@ -35,9 +42,15 @@ class Settings(BaseSettings):
     def base_url(self) -> str:
         return self.public_base_url.rstrip('/')
 
-    def ready_for_calls(self) -> bool:
-        return bool(self.base_url.startswith('https://') and self.twilio_account_sid and self.twilio_auth_token
-                    and self.twilio_phone_number and self.openai_api_key and self.deepgram_api_key)
+    def ready_for_calls(self, engine: str | None = None) -> bool:
+        engine = engine or self.voice_engine
+        transport = bool(self.base_url.startswith('https://') and self.twilio_account_sid
+                         and self.twilio_auth_token and self.twilio_phone_number)
+        if engine == 'openai_live':
+            return transport and bool(self.openai_api_key)
+        if engine == 'deepgram':
+            return transport and bool(self.openai_api_key and self.deepgram_api_key)
+        return False
 
 
 @lru_cache

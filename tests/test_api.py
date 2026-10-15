@@ -98,3 +98,18 @@ def test_plan_route_exposes_safe_diagnostic(client, monkeypatch):
     assert response.status_code == 502
     assert '429' in response.json()['detail']
     assert 'billing' in response.json()['detail'].lower()
+
+
+def test_demo_selects_voice_engine_per_call(client):
+    plan = plan_request(client).json()
+    created = client.post('/api/calls', headers=auth(), json={
+        'plan_id':plan['id'],'confirm':True,'voice_engine':'openai_live'})
+    assert created.status_code == 201, created.text
+    assert created.json()['voice_engine'] == 'openai_live'
+
+
+def test_invalid_voice_engine_rejected(client):
+    plan = plan_request(client).json()
+    response = client.post('/api/calls', headers=auth(), json={
+        'plan_id':plan['id'],'confirm':True,'voice_engine':'wrong_provider'})
+    assert response.status_code == 422

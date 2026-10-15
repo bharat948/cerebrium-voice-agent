@@ -1,3 +1,5 @@
+> **v0.2 GPT-Live update:** The original implementation remains available; see [GPT-Live Upgrade](GPT_LIVE_UPGRADE.md) for the new default engine, API differences, selection, Render migration and validation.
+
 # REST API cookbook
 
 Base: `http://localhost:8000`. All `/api` methods require `X-API-Key` matching `.env` and return JSON. Browser UI uses exactly these endpoints.

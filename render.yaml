@@ -35,6 +35,18 @@ services:
         value: "true"
       - key: TWILIO_ALLOW_INBOUND
         value: "true"
+      - key: VOICE_ENGINE
+        value: openai_live
+      - key: OPENAI_LIVE_MODEL
+        value: gpt-live-1
+      - key: OPENAI_LIVE_VOICE
+        value: marin
+      - key: OPENAI_LIVE_BACKEND_MODEL
+        value: gpt-4o-mini
+      - key: LIVE_BARGE_IN_RMS
+        value: "900"
+      - key: LIVE_BARGE_IN_FRAMES
+        value: "5"
       - key: OPENAI_MODEL
         value: gpt-4o-mini
       - key: DEEPGRAM_STT_MODEL

@@ -19,6 +19,7 @@ from app.planner import build_plan, extract_phone, preview_reply, openai_complet
 from app.prompts import call_system_prompt
 from app.security import require_api_key, require_twilio_http, allow_twilio_websocket
 from app.voice import VoiceSession
+from app.live_voice import LiveVoiceSession
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger('voice-foundry')
@@ -38,7 +39,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title='Voice Foundry API', version='0.1.0', lifespan=lifespan)
+app = FastAPI(title='Voice Foundry API', version='0.2.0', lifespan=lifespan)
 app.mount('/assets', StaticFiles(directory=str(Path(__file__).resolve().parent.parent / 'web')), name='assets')
 
 
@@ -66,7 +67,7 @@ async def homepage():
 
 @app.get('/health')
 async def health():
-    return {'status': 'ok', 'version': '0.1.0'}
+    return {'status': 'ok', 'version': '0.2.0'}
 
 
 @app.get('/api/config', dependencies=[Depends(api_auth)])
@@ -75,6 +76,9 @@ async def get_config():
     return {
         'name': s.app_name, 'demo_mode': s.demo_mode, 'ready_for_calls': s.ready_for_calls(),
         'openai_enabled': bool(s.openai_api_key), 'model': s.openai_model,
+        'voice_engine': s.voice_engine, 'live_model': s.openai_live_model,
+        'live_backend_model': s.openai_live_backend_model,
+        'ready_by_engine': {k:s.ready_for_calls(k) for k in ('openai_live','deepgram')},
         'allowed_numbers': len(s.outbound_allowlist), 'max_call_seconds': s.max_call_seconds
     }
 
@@ -141,6 +145,9 @@ async def get_call(call_id: str):
 @app.post('/api/calls', dependencies=[Depends(api_auth)], status_code=201)
 async def place_call(payload: CallRequest):
     s = get_settings()
+    voice_engine = payload.voice_engine or s.voice_engine
+    if voice_engine not in ('openai_live', 'deepgram'):
+        raise HTTPException(400, 'Unknown voice engine')
     plan = db.get_plan(payload.plan_id)
     if not plan:
         raise HTTPException(404, 'Plan not found')
@@ -149,8 +156,8 @@ async def place_call(payload: CallRequest):
     if plan['state'] != 'draft':
         raise HTTPException(409, 'This plan has already been used')
     if not s.demo_mode:
-        if not s.ready_for_calls():
-            raise HTTPException(400, 'Live calling credentials or PUBLIC_BASE_URL not configured')
+        if not s.ready_for_calls(voice_engine):
+            raise HTTPException(400, f'{voice_engine} credentials or PUBLIC_BASE_URL not configured')
         if plan['phone'] not in s.outbound_allowlist:
             raise HTTPException(403, 'Recipient is not in ALLOWED_OUTBOUND_NUMBERS')
         concurrent = db.one("SELECT count(*) AS n FROM calls WHERE status IN ('queued','ringing','in-progress') AND mode='live'")['n']
@@ -167,7 +174,7 @@ async def place_call(payload: CallRequest):
             raise HTTPException(409, 'This plan has already been used')
     mode = 'demo' if s.demo_mode else 'live'
     call = db.insert_call(plan['id'], plan['agent_id'], plan['phone'], 'outbound', mode,
-                          'simulated' if s.demo_mode else 'queued')
+                          'simulated' if s.demo_mode else 'queued', voice_engine=voice_engine)
     db.add_event(call['id'], 'state', 'Preview created: no phone call was placed' if s.demo_mode
                  else 'Call queued for Twilio')
     if s.demo_mode:
@@ -272,7 +279,7 @@ async def hangup_call(call_id: str):
 async def twilio_voice(request: Request):
     values = await require_twilio_http(request)
     s = get_settings()
-    if s.demo_mode or not s.ready_for_calls():
+    if s.demo_mode:
         raise HTTPException(503, 'Live calls disabled')
     call_id = request.query_params.get('call_id')
     if not call_id:
@@ -286,12 +293,14 @@ async def twilio_voice(request: Request):
                               ['Disclose AI identity and greet the caller', 'Understand their request',
                                'Answer questions without inventing commitments', 'Summarize next steps'],
                               'Hello, I am Ava, an AI assistant. How can I help?', 'Incoming call')
-        call = db.insert_call(plan['id'], agent_id, caller, 'inbound', 'live', 'ringing')
+        call = db.insert_call(plan['id'], agent_id, caller, 'inbound', 'live', 'ringing', voice_engine=s.voice_engine)
         call_id = call['id']
         db.add_event(call_id, 'state', 'Incoming telephone call')
     call = db.one('SELECT * FROM calls WHERE id=?', (call_id,))
     if not call or call['mode'] != 'live' or call['status'] in ('completed','failed','canceled'):
         raise HTTPException(404, 'Call not active')
+    if not s.ready_for_calls(call.get('voice_engine') or 'deepgram'):
+        raise HTTPException(503, 'Selected voice engine unavailable')
     sid = str(values.get('CallSid', ''))
     if call['twilio_sid'] and sid != call['twilio_sid']:
         raise HTTPException(403, 'Twilio Call SID mismatch')
@@ -322,7 +331,7 @@ async def twilio_status(request: Request):
 @app.websocket('/twilio/media')
 async def twilio_media(ws: WebSocket):
     s = get_settings()
-    if s.demo_mode or not s.ready_for_calls() or not allow_twilio_websocket(ws):
+    if s.demo_mode or not allow_twilio_websocket(ws):
         await ws.close(code=1008)
         return
     await ws.accept()
@@ -343,8 +352,14 @@ async def twilio_media(ws: WebSocket):
             return
         agent = db.one('SELECT * FROM agents WHERE id=?', (call['agent_id'],))
         plan = db.get_plan(call['plan_id']) if call['plan_id'] else None
-        session = VoiceSession(ws, call, agent, plan)
-        db.add_event(call_id, 'state', 'Voice runtime starting')
+        engine = call.get('voice_engine') or 'deepgram'
+        if not s.ready_for_calls(engine):
+            db.add_event(call_id, 'error', 'Selected voice engine unavailable')
+            await ws.close(code=1011)
+            return
+        session_class = LiveVoiceSession if engine == 'openai_live' else VoiceSession
+        session = session_class(ws, call, agent, plan)
+        db.add_event(call_id, 'state', f'Voice runtime starting: {engine}')
         try:
             await asyncio.wait_for(session.run(started), timeout=s.max_call_seconds)
         except asyncio.TimeoutError:

@@ -49,12 +49,13 @@ document.addEventListener('click',(e)=>{
 });
 function callRow(call){
  const style=['completed'].includes(call.status)?'#c6fc83':(['failed','busy','no-answer'].includes(call.status)?'#ffb9a9':'#e4c994');
- return `<button class="list-row" data-call-id="${safe(call.id)}"><span class="row-symbol">↗</span><span class="row-main"><strong>${safe(call.phone)}</strong><small>${safe(fmt(call.direction))} · ${safe(call.mode)}</small></span><span class="row-end"><strong style="color:${style}">${safe(fmt(call.status))}</strong><small>${safe(prettyTime(call.created_at))}</small></span></button>`;
+ return `<button class="list-row" data-call-id="${safe(call.id)}"><span class="row-symbol">↗</span><span class="row-main"><strong>${safe(call.phone)}</strong><small>${safe(fmt(call.direction))} · ${safe(call.mode)} · ${safe(call.voice_engine||"deepgram")}</small></span><span class="row-end"><strong style="color:${style}">${safe(fmt(call.status))}</strong><small>${safe(prettyTime(call.created_at))}</small></span></button>`;
 }
 function render(){
  const s=state.config;
  $('runtime-label').textContent=s.demo_mode?'Preview environment':'Live calling environment';
- $('model-label').textContent=s.model;
+ $('model-label').textContent=s.voice_engine==='openai_live'?s.live_model:s.model+' + Deepgram';
+ $('engine-select').value=s.voice_engine;
  $('mode-chip').textContent=s.demo_mode?'● Demo mode':'● Live mode';
  $('mode-chip').style.color=s.demo_mode?'#c8f4a4':'#f3c793';
  $('stat-total').textContent=state.calls.length;$('stat-done').textContent=state.calls.filter(c=>c.status==='completed').length;
@@ -64,7 +65,7 @@ function render(){
  $('agent-select').innerHTML=state.agents.map(a=>`<option value="${safe(a.id)}">${safe(a.name)} · ${safe(a.role)}</option>`).join('');
  $('agent-count').textContent=`${state.agents.length} AGENTS`;
  $('agent-list').innerHTML=state.agents.map(a=>`<div class="agent-card"><span class="row-symbol">◈</span><div><h3>${safe(a.name)}</h3><p>${safe(a.role)} · ${safe(a.language)}</p><small>${safe(a.instructions.slice(0,180))}${a.instructions.length>180?'…':''}</small></div></div>`).join('');
- $('settings-readiness').innerHTML=[['Runtime mode',s.demo_mode?'Demo / no dialing':'Live'],['Twilio + Deepgram + OpenAI',s.ready_for_calls?'Configured':'Missing live configuration'],['OpenAI planning',s.openai_enabled?'Enabled':'Template-only mode'],['Reasoning model',s.model],['Allowlisted recipients',String(s.allowed_numbers)],['Maximum call duration',s.max_call_seconds+' seconds']].map(([k,v])=>`<div class="setting-row"><span>${safe(k)}</span><strong>${safe(v)}</strong></div>`).join('');
+ $('settings-readiness').innerHTML=[['Runtime mode',s.demo_mode?'Demo / no dialing':'Live'],['Default voice engine',s.voice_engine],['Default engine readiness',s.ready_for_calls?'Configured':'Missing live configuration'],['OpenAI planning',s.openai_enabled?'Enabled':'Template-only mode'],['Reasoning model',s.model],['Allowlisted recipients',String(s.allowed_numbers)],['Maximum call duration',s.max_call_seconds+' seconds']].map(([k,v])=>`<div class="setting-row"><span>${safe(k)}</span><strong>${safe(v)}</strong></div>`).join('');
  $('dial-verb').textContent=s.demo_mode?'start preview':'place live call';
  if(state.selectedPlan)showPlan(state.selectedPlan);
 }
@@ -106,11 +107,13 @@ $('call-btn').addEventListener('click',async()=>{
  if(!state.selectedPlan)return;
  const mode=state.config.demo_mode?'simulation (no telephone call)':'REAL telephone call';
  const phone=state.selectedPlan.phone;
+ const engine=$('engine-select').value;
+ if(!state.config.demo_mode&&!state.config.ready_by_engine[engine]){toast('Missing provider keys for '+engine,true);return;}
  if(!confirm(`Approve ${mode} to ${phone}?\n\nEnsure you are authorized to call this recipient.`))return;
  $('call-btn').disabled=true;
  try{
    const plan=await savePlan();
-   const call=await api('/api/calls',{method:'POST',body:JSON.stringify({plan_id:plan.id,confirm:true})});
+   const call=await api('/api/calls',{method:'POST',body:JSON.stringify({plan_id:plan.id,confirm:true,voice_engine:engine})});
    state.selectedCall=call.id;state.selectedPlan.state='used';
    await load();navigate('history');await renderCallDetail();
    toast(state.config.demo_mode?'Preview opened. No call was placed.':'Call submitted to Twilio.');
@@ -123,7 +126,7 @@ async function renderCallDetail(){
  $('detail-status').textContent=call.status.toUpperCase();
  $('call-detail-body').classList.remove('inspector-empty');
  const isOpen=!['completed','failed','busy','no-answer','canceled'].includes(call.status);
- let html=`<div class="detail-top"><h3>${safe(call.phone)}</h3><p>${safe(call.direction)} · ${safe(call.mode)} · ${safe(prettyTime(call.created_at))}</p><p style="margin-top:8px">${safe(call.plan?.goal || 'General support')}</p><button class="btn outline" id="summary-btn">Generate outcome summary</button> ${isOpen?`<button class="btn outline" id="hangup-btn">${call.mode==='demo'?'End preview':'End call'}</button>`:''}</div>`;
+ let html=`<div class="detail-top"><h3>${safe(call.phone)}</h3><p>${safe(call.direction)} · ${safe(call.mode)} · ${safe(call.voice_engine||"deepgram")} · ${safe(prettyTime(call.created_at))}</p><p style="margin-top:8px">${safe(call.plan?.goal || 'General support')}</p><button class="btn outline" id="summary-btn">Generate outcome summary</button> ${isOpen?`<button class="btn outline" id="hangup-btn">${call.mode==='demo'?'End preview':'End call'}</button>`:''}</div>`;
  html+=`<div class="event-list">${call.events.length?call.events.map(e=>`<div class="event"><span class="event-mark">${e.type==='transcript'?(e.speaker==='caller'?'◉':'⌁'):'◇'}</span><div class="event-content"><div class="event-meta"><span>${safe(e.speaker||e.type)}</span><span>${safe(prettyTime(e.created_at))}</span></div>${safe(e.content)}</div></div>`).join(''):'<p class="muted">Waiting for events…</p>'}</div>`;
  if(call.mode==='demo'&&call.status==='simulated'){
   html+=`<form id="preview-form" class="preview-form"><input id="preview-input" placeholder="Type what the recipient might say…" required maxlength="800"/><button class="btn primary" type="submit">Reply ↗</button></form>`;

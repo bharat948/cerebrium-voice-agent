@@ -1,3 +1,5 @@
+> **v0.2 GPT-Live update:** The original implementation remains available; see [GPT-Live Upgrade](GPT_LIVE_UPGRADE.md) for the new default engine, API differences, selection, Render migration and validation.
+
 # Local setup: Windows / macOS / Linux
 
 ## Recommended hardware

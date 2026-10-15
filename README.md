@@ -1,10 +1,10 @@
 # Voice Foundry
 
-**A local-first voice-agent command center.** Chat with an assistant to draft a call agenda, review/edit it, explicitly approve the call, run a Twilio + Deepgram + OpenAI voice conversation, and inspect its transcript and lifecycle.
+**A local-first voice-agent command center.** Chat with an assistant to draft a call agenda, review/edit it, explicitly approve the call, run a Twilio + GPT-Live-1 or Deepgram + OpenAI voice conversation, and inspect its transcript and lifecycle.
 
 ![Status: local-first](https://img.shields.io/badge/status-local--first-9bda7e) ![Python](https://img.shields.io/badge/python-3.12-blue)
 
-**Start in demo mode without any provider credentials.** It does not dial anybody. Live outbound calling requires Twilio, Deepgram, OpenAI, a public HTTPS URL (provided automatically on Render; otherwise a local tunnel), an authorized destination, and `DEMO_MODE=false`.
+**Start in demo mode without any provider credentials.** It does not dial anybody. Live outbound calling requires Twilio, OpenAI (plus Deepgram only for the fallback engine), a public HTTPS URL (provided automatically on Render; otherwise a local tunnel), an authorized destination, and `DEMO_MODE=false`.
 
 ## At a glance
 
@@ -16,7 +16,9 @@
 | Local preview | ✅ | Text-based simulated call, optional OpenAI reply |
 | Twilio outbound | ✅ Implemented | Real credentials and authorized recipient required; live network not exercised in this package |
 | Twilio inbound | ✅ Implemented | Point incoming webhook at `/twilio/voice`; enable with env |
-| Deepgram STT / TTS | ✅ Implemented | Nova streaming STT and Aura streaming TTS; default English voice |
+| GPT-Live-1 (new) | ✅ Adapter + offline tests | Direct bidirectional 8 kHz PCMU; separate Live API; needs real-provider smoke test |
+| Dual selectable voice engines | ✅ | Choose GPT-Live or Deepgram per call, server default via `VOICE_ENGINE` |
+| Deepgram STT / TTS | ✅ Implemented | Original Nova streaming STT + Aura TTS retained as fallback |
 | Live transcripts and interruptions | ✅ Implemented | Twilio `clear`, streamed speech, transcript events |
 | SQLite persistence | ✅ | Persisted in Docker volume by default |
 | Controls | ✅ | API key, Twilio signatures, allowlist, per-plan approval, concurrency/rate/duration limits |
@@ -34,7 +36,7 @@
 1. Push this repository to a private GitHub repository.
 2. In [Render](https://dashboard.render.com/), select **New > Blueprint**, choose the repository, and review the paid service/disk costs before applying.
 3. Open the deployed HTTPS URL, locate the generated `APP_API_KEY` in the Render Environment settings, and log in. Initially, `DEMO_MODE=true` enables safe previewing.
-4. Add Twilio, Deepgram and OpenAI credentials, and allowlist your own test number. Switch `DEMO_MODE=false` when ready for live calls.
+4. Add Twilio and OpenAI credentials (Deepgram only for fallback), and allowlist your own test number. Switch `DEMO_MODE=false` when ready for live calls.
 5. For inbound calls, configure Twilio's HTTP POST voice webhook to `https://YOUR-SERVICE.onrender.com/twilio/voice`. The code generates the `wss://.../twilio/media` stream URL.
 
 You do **not** need ngrok, Docker Desktop, or an unrestricted laptop to deploy. See the detailed [Render deployment guide](docs/RENDER_DEPLOY.md). Render's Free plan does not provide persistent SQLite storage and sleeps during inactivity, so it is not appropriate for reliable phone calls.
@@ -44,7 +46,7 @@ You do **not** need ngrok, Docker Desktop, or an unrestricted laptop to deploy. 
 - Docker Desktop (Windows with WSL2, macOS, or Linux with Docker Compose V2)
 - Internet connection for pulling Python packages during first build
 - Browser; recommended Chrome/Edge/Firefox
-- For live calling: Twilio Programmable Voice number and Auth Token, Deepgram API key, OpenAI API key, and ngrok or Cloudflare Tunnel
+- For live calling: Twilio Programmable Voice number and Auth Token, an OpenAI API key, plus Deepgram key if using its engine; HTTPS hosting (Render already supplies this)
 
 ## Quick start on Windows (PowerShell)
 
@@ -70,7 +72,7 @@ On PowerShell you can alternatively run `./scripts/run-local.ps1`. Stop with `do
 
 ## Turn on real phone calling
 
-1. Create / locate your credentials from [Twilio](https://console.twilio.com/), [Deepgram](https://console.deepgram.com/), and [OpenAI](https://platform.openai.com/api-keys). **Keep tokens in `.env`, never paste them into the web chat.**
+1. Create / locate your credentials from [Twilio](https://console.twilio.com/) and [OpenAI](https://platform.openai.com/api-keys), or [Deepgram](https://console.deepgram.com/) when using the fallback. **Keep tokens in `.env`, never paste them into the web chat.**
 2. Start the server: `docker compose up -d --build`.
 3. Expose the server through TLS: `ngrok http 8000` (separate terminal). Copy the **HTTPS** forwarding domain, e.g. `https://abc123.ngrok-free.app`. The tunnel must forward WebSockets too.
 4. Edit `.env`:
@@ -82,8 +84,12 @@ On PowerShell you can alternatively run `./scripts/run-local.ps1`. Stop with `do
    TWILIO_ACCOUNT_SID=AC...
    TWILIO_AUTH_TOKEN=...
    TWILIO_PHONE_NUMBER=+1...
-   DEEPGRAM_API_KEY=...
    OPENAI_API_KEY=...
+   VOICE_ENGINE=openai_live
+   OPENAI_LIVE_MODEL=gpt-live-1
+   OPENAI_LIVE_VOICE=marin
+   OPENAI_LIVE_BACKEND_MODEL=gpt-4o-mini
+   # DEEPGRAM_API_KEY=...  # only for fallback
    OPENAI_MODEL=gpt-4o-mini
    ALLOWED_OUTBOUND_NUMBERS=+14155552671
    TWILIO_VALIDATE_SIGNATURES=true
@@ -109,18 +115,19 @@ Press **Create plan**. The generated agenda is shown in the right inspector and 
 
 ```mermaid
 flowchart LR
-    U[Browser dashboard] --> API[FastAPI control plane]
-    API --> DB[(SQLite /data)]
-    API -->|approved outbound| TW[Twilio Voice]
-    TW <-->|8 kHz mu-law WSS| VS[FastAPI voice runtime]
-    VS <-->|streaming transcription| DG[Deepgram Nova]
-    VS <-->|streamed tokens| OA[OpenAI GPT-4o Mini]
-    VS -->|streamed mu-law audio| TTS[Deepgram Aura]
-    TTS --> VS
-    VS --> DB
+    U[Dashboard] --> API[FastAPI / Render]
+    API --> DB[(Persistent SQLite)]
+    API --> T[Twilio REST]
+    T <-->|Media Streams PCMU 8k| V[Voice bridge]
+    V <-->|Live WS session| L[GPT-Live-1]
+    L -->|optional delegation| R[OpenAI Responses gpt-4o-mini]
+    V -. fallback .-> D[Deepgram STT + GPT-4o Mini + TTS]
+    V --> DB
 ```
 
-### API overview
+**New in v0.2:** choose the runtime directly in Call studio. GPT-Live removes separate streaming STT and TTS stages, but requires OpenAI API billing and a real phone smoke test. The original engine remains available. See [GPT-Live upgrade and Render migration](docs/GPT_LIVE_UPGRADE.md).
+
+## API overview
 
 | Method | Endpoint | Purpose |
 |---|---|---|

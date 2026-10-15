@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field, field_validator
 import re
+from typing import Literal
 
 E164 = re.compile(r'^\+[1-9][0-9]{7,14}$')
 
@@ -33,6 +34,7 @@ class PlanEdit(BaseModel):
 class CallRequest(BaseModel):
     plan_id: str
     confirm: bool = False
+    voice_engine: Literal["openai_live", "deepgram"] | None = None
 
 
 class PreviewTurn(BaseModel):

@@ -47,7 +47,7 @@ def init_db():
             id TEXT PRIMARY KEY, plan_id TEXT, agent_id TEXT NOT NULL, phone TEXT NOT NULL,
             direction TEXT NOT NULL, mode TEXT NOT NULL, status TEXT NOT NULL,
             twilio_sid TEXT, error TEXT, started_at TEXT, ended_at TEXT,
-            created_at TEXT NOT NULL
+            created_at TEXT NOT NULL, voice_engine TEXT NOT NULL DEFAULT 'deepgram'
         );
         CREATE INDEX IF NOT EXISTS idx_calls_created ON calls(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_calls_sid ON calls(twilio_sid);
@@ -57,6 +57,10 @@ def init_db():
         );
         CREATE INDEX IF NOT EXISTS idx_events_call ON events(call_id, created_at);
         ''')
+        # Existing Render SQLite disks: add engine column in place, no data loss.
+        cols = {row[1] for row in c.execute('PRAGMA table_info(calls)')}
+        if 'voice_engine' not in cols:
+            c.execute("ALTER TABLE calls ADD COLUMN voice_engine TEXT NOT NULL DEFAULT 'deepgram'")
         count = c.execute('SELECT count(*) FROM agents').fetchone()[0]
         if not count:
             c.execute('INSERT INTO agents VALUES (?,?,?,?,?,?)', (
@@ -109,10 +113,10 @@ def plans() -> list[dict]:
     return rows
 
 
-def insert_call(plan_id: str | None, agent_id: str, phone: str, direction: str, mode: str, status: str) -> dict:
+def insert_call(plan_id: str | None, agent_id: str, phone: str, direction: str, mode: str, status: str, voice_engine: str = "deepgram") -> dict:
     id_ = uid()
-    execute('INSERT INTO calls (id,plan_id,agent_id,phone,direction,mode,status,created_at) VALUES (?,?,?,?,?,?,?,?)',
-            (id_, plan_id, agent_id, phone, direction, mode, status, now()))
+    execute('INSERT INTO calls (id,plan_id,agent_id,phone,direction,mode,status,created_at,voice_engine) VALUES (?,?,?,?,?,?,?,?,?)',
+            (id_, plan_id, agent_id, phone, direction, mode, status, now(), voice_engine))
     return one('SELECT * FROM calls WHERE id=?', (id_,))
 
 
