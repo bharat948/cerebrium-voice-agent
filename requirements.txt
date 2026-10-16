@@ -13,7 +13,7 @@ psycopg[binary]>=3.2,<4
 alembic>=1.13,<2
 authlib>=1.3,<2
 itsdangerous>=2.2,<3
-feedparser>=6.0,<7
+feedparser>=6.0.14,<7
 
 # Knowledge extraction and encrypted Google integration tokens
 pymupdf>=1.24,<2
