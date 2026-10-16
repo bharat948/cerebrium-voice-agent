@@ -1,3 +1,12 @@
+## 4.0.0-alpha2 (2026-10-16)
+
+- Keep voice sessions open for recoverable `responses_validation_failed` events before or after startup.
+- Retain bounded, credential-redacted provider error messages in logs and owner call events.
+- Optional single backend-model retry using `session.update`, preserving authorized tools.
+- Apply the same recovery to the browser sandbox and bound startup waits to one deadline.
+- Add a short GPT-Live configuration probe that does not dial Twilio or execute custom tools.
+- Provider account access and live call behavior still require deployment verification.
+
 ## 4.0.0-alpha1 (2026-10-16)
 
 - Temporal and consent-aware agent/contact memory consolidation with contradiction review.

@@ -14,6 +14,7 @@ from app.config import get_settings
 from app.security import require_api_key
 from app import db
 from app.live_voice import OPENAI_LIVE_URL, session_start
+from app.live_diagnostics import LiveProviderError, LiveSessionDiagnostics, wait_for_live_start
 from app.v3 import registry
 log=logging.getLogger(__name__)
 router=APIRouter(prefix='/api/v3/voice',tags=['Voice Sandbox'])
@@ -62,10 +63,13 @@ async def browser_preview(ws:WebSocket):
         async with websockets.connect(OPENAI_LIVE_URL,
             additional_headers={'Authorization':'Bearer '+s.openai_api_key},
             open_timeout=15,ping_interval=20,max_size=2**22) as live:
+            async def send_live(event):
+                await live.send(json.dumps(event))
+            diagnostics=LiveSessionDiagnostics(
+                send_live, backend_model=s.openai_live_backend_model, api_key=s.openai_api_key,
+                fallback_model=s.openai_live_fallback_backend_model, label='sandbox agent=' + agent_id)
             await live.send(json.dumps(started))
-            response=json.loads(await asyncio.wait_for(live.recv(),timeout=15))
-            if response.get('type')!='session.started':
-                raise RuntimeError('Live session start failed')
+            await wait_for_live_start(live,diagnostics)
             await ws.send_json({'type':'ready','format':'pcmu','sample_rate':8000})
             async def incoming():
                 while True:
@@ -79,6 +83,7 @@ async def browser_preview(ws:WebSocket):
             async def outgoing():
                 async for event in live:
                     data=json.loads(event)
+                    await diagnostics.observe(data)
                     typ=data.get('type')
                     if typ=='session.output_audio.delta':
                         await ws.send_json({'type':'audio','audio':data.get('delta','')})
@@ -92,8 +97,9 @@ async def browser_preview(ws:WebSocket):
             await asyncio.gather(*tasks,return_exceptions=True)
     except (WebSocketDisconnect,asyncio.CancelledError):pass
     except Exception as exc:
-        log.warning('Voice sandbox failure %s',type(exc).__name__)
-        try:await ws.send_json({'type':'error','detail':'Voice provider unavailable'})
+        detail=str(exc) if isinstance(exc,LiveProviderError) else 'Voice provider unavailable'
+        log.warning('Voice sandbox failure %s: %s',type(exc).__name__,detail)
+        try:await ws.send_json({'type':'error','detail':detail})
         except Exception:pass
     finally:
         try:await ws.close()

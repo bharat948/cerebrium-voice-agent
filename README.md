@@ -10,6 +10,10 @@ Voice Foundry is a **single-server modular monolith** for personalized AI voice 
 
 See [v4 intelligence design and owner APIs](docs/INTELLIGENCE_V4.md) and the [v4 release gates](docs/RELEASE_V4_CHECKLIST.md).
 
+**Voice startup hotfix (4.0.0-alpha2):** Recoverable backend validation errors now retain
+the provider's detailed reason and keep the voice conversation open. See
+[the fix and Render check instructions](docs/LIVE_VALIDATION_HOTFIX.md).
+
 ## First run
 
 ### Docker Compose (app + PostgreSQL + pgvector)
