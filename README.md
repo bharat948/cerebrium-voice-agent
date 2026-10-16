@@ -1,223 +1,141 @@
 # Voice Foundry
 
-**A local-first voice-agent command center.** Chat with an assistant to draft a call agenda, review/edit it, explicitly approve the call, run a Twilio + GPT-Live-1 or Deepgram + OpenAI voice conversation, and inspect its transcript and lifecycle.
+**Build voice specialists. Give them an agenda. Keep conversations and actions under control.**
 
-![Status: local-first](https://img.shields.io/badge/status-local--first-9bda7e) ![Python](https://img.shields.io/badge/python-3.12-blue)
+[![CI](https://github.com/actions/runner-images/actions/workflows/ci.yml/badge.svg)](https://docs.github.com/en/actions) [![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB)](https://www.python.org/) [![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE) ![Release](https://img.shields.io/badge/Release-v4.0%20Alpha-orange)
 
-**Start in demo mode without any provider credentials.** It does not dial anybody. Live outbound calling requires Twilio, OpenAI (plus Deepgram only for the fallback engine), a public HTTPS URL (provided automatically on Render; otherwise a local tunnel), an authorized destination, and `DEMO_MODE=false`.
+Voice Foundry is a **single-server modular monolith** for personalized AI voice agents. Create news, Indian-market, appointment, and task agents. Assign contacts and permission scopes, draft and approve call agendas, converse using GPT-Live with Twilio, retrieve permitted memories or knowledge, and delegate research to a durable background worker that can email an opted-in recipient.
 
-## At a glance
+**Release status:** v4.0 alpha adds scoped temporal memory, voice-behaviour policies, and supervised improvement drafts. This is an externally unvalidated development build. It is **not** a promise that every product decision is production-complete. See the [capability matrix](docs/RELEASE_STATUS_FINAL.md) and [validation checklist](docs/VALIDATION_FINAL.md) before using real contact data or making live calls.
 
-| Capability | Included | Notes |
-|---|---|---|
-| Web UI | ✅ | Dark dashboard, call studio, agents, history, settings; no JS build step |
-| Agenda from chat | ✅ | OpenAI when configured; deterministic template fallback |
-| Editable agenda + explicit approval | ✅ | Never dials during plan generation |
-| Local preview | ✅ | Text-based simulated call, optional OpenAI reply |
-| Twilio outbound | ✅ Implemented | Real credentials and authorized recipient required; live network not exercised in this package |
-| Twilio inbound | ✅ Implemented | Point incoming webhook at `/twilio/voice`; enable with env |
-| GPT-Live-1 (new) | ✅ Adapter + offline tests | Direct bidirectional 8 kHz PCMU; separate Live API; needs real-provider smoke test |
-| Dual selectable voice engines | ✅ | Choose GPT-Live or Deepgram per call, server default via `VOICE_ENGINE` |
-| Deepgram STT / TTS | ✅ Implemented | Original Nova streaming STT + Aura TTS retained as fallback |
-| Live transcripts and interruptions | ✅ Implemented | Twilio `clear`, streamed speech, transcript events |
-| SQLite persistence | ✅ | Persisted in Docker volume by default |
-| Controls | ✅ | API key, Twilio signatures, allowlist, per-plan approval, concurrency/rate/duration limits |
-| Appointment booking integration | ❌ | No scheduling tools connected; never claim confirmed bookings |
-| Native ChatGPT plugin | ❌ | Optional OpenAPI schema for Custom GPT Actions, not an installed native connector |
-| Pipecat/Cerebrium | ❌ | This standalone adapter is local-first; see [Architecture](docs/ARCHITECTURE.md) |
-| Recorded audio / agent voice customization | ❌ | Transcripts only; TTS model set via environment |
+See [v4 intelligence design and owner APIs](docs/INTELLIGENCE_V4.md) and the [v4 release gates](docs/RELEASE_V4_CHECKLIST.md).
 
-> **Scope:** This is a runnable *reference/MVP*, not an audited production telephony service. Live calls require validation with your accounts, end-to-end audio tests, consent/compliance review, monitored deployments, reliable distributed state, and secrets management. The default TTS is English only. Read [Risks and hardening](docs/SECURITY_AND_PRODUCTION.md).
+## First run
 
-## Deploy directly to Render (no ngrok or laptop server)
-
-**Supported:** this repository includes a Render `render.yaml` Blueprint with a Docker web service, HTTPS/WSS callbacks, generated dashboard key, and a paid persistent disk for call history. Render runs the complete dashboard + real-time voice runtime.
-
-1. Push this repository to a private GitHub repository.
-2. In [Render](https://dashboard.render.com/), select **New > Blueprint**, choose the repository, and review the paid service/disk costs before applying.
-3. Open the deployed HTTPS URL, locate the generated `APP_API_KEY` in the Render Environment settings, and log in. Initially, `DEMO_MODE=true` enables safe previewing.
-4. Add Twilio and OpenAI credentials (Deepgram only for fallback), and allowlist your own test number. Switch `DEMO_MODE=false` when ready for live calls.
-5. For inbound calls, configure Twilio's HTTP POST voice webhook to `https://YOUR-SERVICE.onrender.com/twilio/voice`. The code generates the `wss://.../twilio/media` stream URL.
-
-You do **not** need ngrok, Docker Desktop, or an unrestricted laptop to deploy. See the detailed [Render deployment guide](docs/RENDER_DEPLOY.md). Render's Free plan does not provide persistent SQLite storage and sleeps during inactivity, so it is not appropriate for reliable phone calls.
-
-## Prerequisites
-
-- Docker Desktop (Windows with WSL2, macOS, or Linux with Docker Compose V2)
-- Internet connection for pulling Python packages during first build
-- Browser; recommended Chrome/Edge/Firefox
-- For live calling: Twilio Programmable Voice number and Auth Token, an OpenAI API key, plus Deepgram key if using its engine; HTTPS hosting (Render already supplies this)
-
-## Quick start on Windows (PowerShell)
-
-```powershell
-# From the extracted voice-foundry folder
-Copy-Item .env.example .env
-# Optional: change APP_API_KEY in .env now.
-docker compose up --build -d
-start http://localhost:8000
-```
-
-In the login screen, enter the `APP_API_KEY` value from `.env` (initial demo default: `dev-local-only-change-me`). Browse Call studio → enter a **test phone in E.164 format** and an agenda instruction → Create plan → edit → Approve & start preview. In demo mode no number is actually called.
-
-**Other OS / one-script launch:**
+### Docker Compose (app + PostgreSQL + pgvector)
 
 ```bash
 cp .env.example .env
-./scripts/run-local.sh
-# open http://localhost:8000
+# Edit .env to set strong APP_API_KEY, SESSION_SECRET and POSTGRES_PASSWORD.
+docker compose up --build -d
+docker compose logs -f voice-foundry
 ```
 
-On PowerShell you can alternatively run `./scripts/run-local.ps1`. Stop with `docker compose down`. Read logs using `docker compose logs -f voice-foundry`. Data is in a named Docker volume and survives normal restarts / `down` (but not `down -v`).
+Windows PowerShell:
 
-## Turn on real phone calling
-
-1. Create / locate your credentials from [Twilio](https://console.twilio.com/) and [OpenAI](https://platform.openai.com/api-keys), or [Deepgram](https://console.deepgram.com/) when using the fallback. **Keep tokens in `.env`, never paste them into the web chat.**
-2. Start the server: `docker compose up -d --build`.
-3. Expose the server through TLS: `ngrok http 8000` (separate terminal). Copy the **HTTPS** forwarding domain, e.g. `https://abc123.ngrok-free.app`. The tunnel must forward WebSockets too.
-4. Edit `.env`:
-
-   ```dotenv
-   APP_API_KEY=a-long-random-secret-generated-by-you
-   DEMO_MODE=false
-   PUBLIC_BASE_URL=https://abc123.ngrok-free.app
-   TWILIO_ACCOUNT_SID=AC...
-   TWILIO_AUTH_TOKEN=...
-   TWILIO_PHONE_NUMBER=+1...
-   OPENAI_API_KEY=...
-   VOICE_ENGINE=openai_live
-   OPENAI_LIVE_MODEL=gpt-live-1
-   OPENAI_LIVE_VOICE=marin
-   OPENAI_LIVE_BACKEND_MODEL=gpt-4o-mini
-   # DEEPGRAM_API_KEY=...  # only for fallback
-   OPENAI_MODEL=gpt-4o-mini
-   ALLOWED_OUTBOUND_NUMBERS=+14155552671
-   TWILIO_VALIDATE_SIGNATURES=true
-   ```
-
-5. Restart for new environment values: `docker compose up --build -d --force-recreate`.
-6. Sign in with the **new** APP_API_KEY. Create plan for a number in the allowlist and click Approve & place live call.
-7. To receive inbound calls, set Twilio number → **Voice: A call comes in** → Webhook / HTTP POST → `https://abc123.ngrok-free.app/twilio/voice`. Twilio opens a bidirectional stream at `wss://abc123.ngrok-free.app/twilio/media`, which is returned dynamically in TwiML.
-
-**Twilio trial accounts** may dial only verified destinations; international and regional voice rules also apply. Your provider account must be authorized to use the destination. Check regulatory restrictions (including India) before outbound usage.
-
-**Use real numbers only with authorization and appropriate consent.** Inform recipients that they're speaking to AI; get required consent for transcription and any recording (this implementation stores transcripts and does not record audio). Respect opt-outs, calling-hour rules, and applicable telecom/consumer-protection requirements.
-
-## Example agent briefing
-
-In Call studio set recipient `+14155552671`, agent `Ava`, and type:
-
-> Introduce yourself as an AI receptionist for a dental clinic. Ask whether the patient wants a follow-up appointment. Collect their preferred day and time. Do not claim a booking occurred. Ask one question at a time and summarize the next step.
-
-Press **Create plan**. The generated agenda is shown in the right inspector and can be edited before approval.
-
-## What happens to the call?
-
-```mermaid
-flowchart LR
-    U[Dashboard] --> API[FastAPI / Render]
-    API --> DB[(Persistent SQLite)]
-    API --> T[Twilio REST]
-    T <-->|Media Streams PCMU 8k| V[Voice bridge]
-    V <-->|Live WS session| L[GPT-Live-1]
-    L -->|optional delegation| R[OpenAI Responses gpt-4o-mini]
-    V -. fallback .-> D[Deepgram STT + GPT-4o Mini + TTS]
-    V --> DB
+```powershell
+Copy-Item .env.example .env
+notepad .env
+docker compose up --build -d
 ```
 
-**New in v0.2:** choose the runtime directly in Call studio. GPT-Live removes separate streaming STT and TTS stages, but requires OpenAI API billing and a real phone smoke test. The original engine remains available. See [GPT-Live upgrade and Render migration](docs/GPT_LIVE_UPGRADE.md).
+Open **http://localhost:8000**. With the default `DEMO_MODE=true`, no phone calls or external email are sent. Docker is required for the bundled PostgreSQL environment. If you cannot run Docker, use the Python-only instructions below; your restricted laptop can instead control the same application deployed on Render without a tunnel.
 
-## API overview
-
-| Method | Endpoint | Purpose |
-|---|---|---|
-| `GET` | `/health` | Public process health |
-| `GET` | `/api/config` | Safe non-secret status |
-| `GET/POST` | `/api/agents` | Agent management |
-| `GET/POST` | `/api/plans` | List and prepare plans |
-| `PATCH` | `/api/plans/{plan_id}` | Edit uncalled plan |
-| `GET/POST` | `/api/calls` | List and initiate approved calls |
-| `GET` | `/api/calls/{call_id}` | Status + transcript |
-| `POST` | `/api/calls/{call_id}/preview` | Simulated caller turn |
-| `POST` | `/api/calls/{call_id}/hangup` | End call |
-| `POST` | `/api/calls/{call_id}/summary` | Generate grounded call outcome report |
-| `POST` | `/twilio/voice` | Twilio-signed TwiML callback |
-| `POST` | `/twilio/status` | Twilio-signed call status |
-| `WS` | `/twilio/media` | Twilio-signed bidirectional audio |
-
-All `/api/*` paths require `X-API-Key: <APP_API_KEY>`. No secrets are returned by `/api/config`. FastAPI interactive API docs are at `http://localhost:8000/docs` (do not expose it on a public deployment without access control). See [API cookbook](docs/API.md).
-
-## Run without Docker (Python 3.12)
+### Python-only development (SQLite)
 
 ```bash
 python -m venv .venv
-# Windows: .venv\Scripts\Activate.ps1
-# macOS/Linux: source .venv/bin/activate
-python -m pip install -r requirements-dev.txt
-cp .env.example .env  # Windows PowerShell: Copy-Item .env.example .env
-# Edit .env: DB_PATH=./data/voice_foundry.db (instead of Docker /data path)
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
+source .venv/bin/activate  # Windows: .venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt -r requirements-dev.txt
+cp .env.example .env
+# Ensure DATABASE_URL is blank, and DB_PATH=./data/voice_foundry.db
+python -m alembic upgrade head
+python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-### Tests
+SQLite is for development and migration validation only. Use PostgreSQL + pgvector for the intended deployment.
+
+## What is in the repository?
+
+| Domain | Implemented module or feature |
+|---|---|
+| Voice | Twilio bidirectional Media Streams, 8 kHz μ-law, GPT-Live-1, interrupts, optional Deepgram fallback |
+| Agent Studio | Four templates, draft/publish/rollback, version-pinned instructions, natural-language draft builder, supervised improvement proposals |
+| Personality | Versioned bounded voice-policy controls, identity, playbooks, tone, interruptions, hard platform constraints |
+| Contacts | Manual registration, CSV import, explicit phone/email consent flags, per-agent permission mapping |
+| Memory | Consent-aware temporal consolidation, scoped retrieval/ranking, corrections, contradiction review, optional pgvector embeddings |
+| Knowledge | PDF/DOCX/text upload, private/shared ACL, trust tiers, lexical or indexed pgvector search |
+| Tools | News RSS, Brave Search, licensed NSE/BSE quote adapter, local calendar, task proposals |
+| Live delegation | Backend-governed function calls for research/knowledge/task/appointment proposals |
+| Workflows | Research job queue, leases, retries, schedules, pause/revise/cancel, SMTP reports after consent |
+| Operations | Owner approval inbox, notifications, estimated budgets, call controls, structured outcomes |
+| Integrations | Google owner sign-in, optional Google Contacts import and Calendar read |
+| Infrastructure | FastAPI, SQLAlchemy, Alembic, Postgres, single-service Render/Docker deployment, pytest + CI |
+
+Some features are deliberately bounded: Google Calendar writes are **not** yet synced; a matched caller number is not strong identity proof; human call transfer and full multi-step workflow graphs are not provided. Review the [explicit exclusions](docs/RELEASE_STATUS_FINAL.md).
+
+## Architecture
+
+```mermaid
+flowchart LR
+  B[Browser: Command Center] --> A[FastAPI modular monolith]
+  T[Twilio] <-->|G.711 μ-law WSS| A
+  A <-->|Live WebSocket| O[OpenAI GPT-Live-1]
+  O --> F[Audited delegation gateway]
+  F --> X[News, web, markets, knowledge and proposals]
+  A --> P[(PostgreSQL + pgvector)]
+  A --> W[Durable research worker]
+  W --> P
+  W --> S[SMTP authorized report delivery]
+```
+
+One process handles the API and live WebSockets. Managed PostgreSQL is a stateful dependency, not a separate application microservice. Do **not** raise Render `numInstances` above 1 before distributed-worker and media-session architecture is implemented.
+
+## Enable real phone calling
+
+1. Use [Render deployment instructions](docs/DEPLOY_FINAL.md) for public HTTPS/WSS hosting without opening laptop ports.
+2. Configure `OPENAI_API_KEY`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_PHONE_NUMBER`, public base URL and private owner login.
+3. Register a consenting contact in the dashboard. Assign any required shared-agent permissions. Recording or retention notices must comply with applicable law.
+4. Keep `DEMO_MODE=true` for simulated calls and sandbox exploration. When ready for one authorized test, set `DEMO_MODE=false`.
+5. In Twilio, set the incoming voice webhook to `POST https://YOUR-RENDER-URL/twilio/voice`.
+6. Prepare and approve an outbound call agenda, then make one short test call and review transcript/tool events.
+
+OpenAI API billing is independent of your ChatGPT plan; a working paid API balance and GPT-Live access are required. The media path keeps μ-law audio at 8 kHz instead of introducing STT/TTS as separate network hops. Deepgram remains selectable as a comparison/fallback engine.
+
+## Tools and specialist examples
+
+- **Aria (news):** attributed Google News RSS and Brave web search; proactively suggests relevant context and optional background briefings.
+- **Kuber (markets):** India-focused NSE/BSE quote adapter, market/news research. Delayed quotes are labeled; no trade execution or personalized financial advice.
+- **Mira (appointments):** check local appointment availability, propose owner-approved booking; a proposal **does not** mean a booking exists.
+- **Atlas (tasks):** track task-oriented objectives and propose external actions through explicit permission checks.
+
+Agents have distinct published configurations; no cross-agent conversational collaboration is enabled. Public information may be shared through the knowledge library without sharing private caller memory.
+
+## Privacy and authorization
+
+- Dashboard actions require an owner session; Google OIDC uses the exact stable `GOOGLE_OWNER_SUB` for authorization.
+- The Google Contacts/Calendar integration has separate opt-in OAuth scopes and encrypted tokens, requiring `INTEGRATION_ENCRYPTION_KEY`.
+- Uploaded documents and tool results are **untrusted data**, never system instructions.
+- Sensitive memories require explicit consent; passwords, OTPs, API keys and similar secrets must not be saved intentionally.
+- Email research jobs require an active contact with recorded email consent; the worker re-checks consent immediately before delivery.
+- Unknown phone callers must not obtain privileged personal data. OTP verification is not complete; do not enable privileged voice actions solely based on caller ID.
+
+See [SECURITY.md](SECURITY.md) and [architecture](docs/ARCHITECTURE_FINAL.md).
+
+## Tests and operations
 
 ```bash
 python -m pytest -q
-python -m compileall -q app
+python -m compileall -q app scripts
+node --check web/app.js
 ```
 
-Tests use demo mode and never call Twilio. The test harness has a minimal Twilio SDK shim *only if the real SDK isn't installed*, for disconnected CI/runtime testing. A real deployment must use the Twilio package from requirements.
+GitHub Actions includes a separate PostgreSQL + pgvector migration job. A working Docker Engine and provider credentials are needed for the independent live/staging checklist. The generated [OpenAPI schema](docs/openapi.json) documents authenticated endpoints.
 
-## Repository map
+## Documentation
 
-```text
-voice-foundry/
-├── app/
-│   ├── main.py              # FastAPI routes + Twilio control-plane callbacks
-│   ├── voice.py             # Live full-duplex media pipeline
-│   ├── db.py                # SQLite storage and transcripts
-│   ├── planner.py           # Chat-based agenda generator + preview
-│   ├── security.py          # API key + Twilio signature checks
-│   ├── models.py            # Request validation
-│   ├── prompts.py           # Call-specific AI instructions
-│   └── config.py            # Validated env configuration
-├── web/
-│   ├── index.html           # Responsive dashboard
-│   ├── styles.css           # Styling and animation
-│   └── app.js               # Browser logic
-├── integrations/chatgpt/    # GPT Action OpenAPI schema
-├── docs/                   # Setup, design, API, security, operations
-├── tests/                  # API, auth, planning, demo mode
-├── scripts/                # Windows and Linux start helpers
-├── .github/workflows/      # CI tests
-├── .env.example
-├── Dockerfile
-├── docker-compose.yml
-└── Makefile
-```
+- [Implementation status and known gaps](docs/RELEASE_STATUS_FINAL.md)
+- [Architecture and trust boundaries](docs/ARCHITECTURE_FINAL.md)
+- [Render/local deployment and rollback](docs/DEPLOY_FINAL.md)
+- [Provider smoke test and QA gates](docs/VALIDATION_FINAL.md)
+- [Original requirements and decisions](docs/DECISIONS.md)
+- [Versioned prompt compiler](docs/PROMPT_FRAMEWORK.md)
+- [Migrating existing SQLite data](docs/DATA_MIGRATION_V3.md)
+- [Operator runbook](docs/OPERATIONS.md)
+- [Contributing](CONTRIBUTING.md), [Security policy](SECURITY.md), [License](LICENSE)
 
-## Documentation index
+## Contributing
 
-- [Deploy directly to Render without a tunnel](docs/RENDER_DEPLOY.md)
-- [Detailed local setup](docs/LOCAL_SETUP.md)
-- [Architecture and state transitions](docs/ARCHITECTURE.md)
-- [REST API examples](docs/API.md)
-- [Twilio, voice pipeline, and debugging](docs/VOICE_RUNTIME.md)
-- [Security, privacy, limits, and production checklist](docs/SECURITY_AND_PRODUCTION.md)
-- [Testing and acceptance criteria](docs/TESTING.md)
-- [Connect with ChatGPT Custom GPT Actions](docs/CHATGPT_ACTIONS.md)
+This is an MIT-licensed reference implementation. Pull requests should include tests, documentation, security/privacy analysis for new tools, a reversible schema plan when applicable and evidence that existing Twilio call flows still work. Do not commit `.env` or live call transcripts.
 
-## A note on Pipecat and Cerebrium
-
-The Cerebrium article demonstrates Pipecat in a managed compute environment. This repository instead implements **direct provider adapters** in Python to keep laptop setup lightweight, avoid CUDA/Torch downloads, and permit local Docker execution without GPU. It uses the same functional stages and Twilio's documented bidirectional WebSocket protocol. **Cerebrium deployment and Pipecat are not included**. They could be substituted as a future deployment/transport adapter, without changing the web control-plane contract.
-
-## License
-
-MIT, see `LICENSE`.
-
-### Render planning API troubleshooting
-
-If **Create Plan** displays `Unable to generate plan (HTTPStatusError)`,
-this is an OpenAI API error, not a Render Blueprint error. See
-[Render deployment troubleshooting](docs/RENDER_DEPLOY.md#dashboard-error-unable-to-generate-plan-httpstatuserror).
-The updated code reports an actionable, sanitized status code without exposing credentials.
+Third-party provider logos, APIs, phone numbers, data feeds and model voices remain subject to their respective terms and subscription requirements.

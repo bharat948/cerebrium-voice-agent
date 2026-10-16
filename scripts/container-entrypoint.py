@@ -7,6 +7,7 @@ We start as root only long enough to chown the mount point, then drop privileges
 import os
 import pwd
 import sys
+import subprocess
 
 
 def main():
@@ -22,6 +23,9 @@ def main():
         os.setgid(user.pw_gid)
         os.setuid(user.pw_uid)
 
+    # One-instance deployment only: schema upgrades happen before accepting traffic.
+    # Do not start multiple replicas with this in-process migration strategy.
+    subprocess.run(['python','-m','alembic','upgrade','head'], check=True)
     os.execvp('uvicorn', [
         'uvicorn', 'app.main:app', '--host', '0.0.0.0', '--port', port,
         '--proxy-headers', '--forwarded-allow-ips', '127.0.0.1',

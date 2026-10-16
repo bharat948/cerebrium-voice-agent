@@ -5,6 +5,9 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY app ./app
 COPY web ./web
+COPY migrations ./migrations
+COPY alembic.ini ./alembic.ini
+COPY scripts ./scripts
 COPY scripts/container-entrypoint.py /srv/container-entrypoint.py
 RUN mkdir -p /data && useradd --system --uid 10001 --create-home appuser && chown appuser:appuser /data
 # The entrypoint fixes ownership of a newly mounted Render disk, then drops root

@@ -1,15 +1,64 @@
-name: Validate
+name: CI
 on:
-  push:
   pull_request:
+  push:
+    branches: [main]
 jobs:
-  tests:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: pip install -r requirements-dev.txt
-      - run: python -m compileall -q app
-      - run: python -m pytest -q
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt -r requirements-dev.txt
+      - name: Compile Python
+        run: python -m compileall -q app scripts
+      - name: Run tests
+        run: python -m pytest -q
+      - name: Syntax-check browser JS
+        run: node --check web/app.js
+  postgres-schema:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_DB: voice_foundry_test
+          POSTGRES_USER: voice_test
+          POSTGRES_PASSWORD: voice_test_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U voice_test -d voice_foundry_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      DATABASE_URL: postgresql+psycopg://voice_test:voice_test_password@127.0.0.1:5432/voice_foundry_test
+      DEMO_MODE: 'true'
+      APP_API_KEY: ci-only-strong-demo-key-not-for-deployment
+      AUTH_MODE: api_key
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m pip install -r requirements.txt
+      - name: Verify Alembic upgrade on PostgreSQL and pgvector
+        run: |
+          python -m alembic upgrade head
+          python - <<'PY'
+          from app import db
+          db.init_db()
+          assert db.one("SELECT count(*) AS n FROM agents") is not None
+          assert db.one("SELECT COUNT(*) AS n FROM pg_extension WHERE extname='vector'")['n'] == 1
+          for name in ('memory_vectors','knowledge_vectors','approvals','mission_schedules'):
+              assert db.one("SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_name=?", (name,))['n'] == 1
+          print('PostgreSQL schema and pgvector verified')
+          PY

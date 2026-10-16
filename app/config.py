@@ -10,12 +10,27 @@ class Settings(BaseSettings):
     demo_mode: bool = True
     public_base_url: str = ''
     db_path: str = '/data/voice_foundry.db'
+    database_url: str = ''
+    auth_mode: str = 'api_key'  # google or api_key; production should use google
+    google_client_id: str = ''
+    google_client_secret: str = ''
+    google_owner_sub: str = ''
+    session_secret: str = ''
+    smtp_host: str = ''
+    smtp_port: int = 587
+    smtp_username: str = ''
+    smtp_password: str = ''
+    smtp_from: str = ''
+    enable_background_worker: bool = True
+    worker_poll_seconds: int = 10
+    brave_search_api_key: str = ''
     twilio_account_sid: str = ''
     twilio_auth_token: str = ''
     twilio_phone_number: str = ''
     twilio_validate_signatures: bool = True
     twilio_allow_inbound: bool = True
     allowed_outbound_numbers: str = ''
+    owner_phone: str = ''
     openai_api_key: str = ''
     openai_model: str = 'gpt-4o-mini'
     # Selectable per call. Existing deployments without VOICE_ENGINE automatically use Live.
@@ -33,6 +48,12 @@ class Settings(BaseSettings):
     max_concurrent_calls: int = 2
     max_calls_per_hour: int = 10
     transcript_retention_days: int = 30
+    integration_encryption_key: str = ''
+    monthly_budget_usd: float = 15.0
+    agent_monthly_budget_usd: float = 5.0
+    enable_postcall_processor: bool = True
+    google_import_enabled: bool = False
+    twelve_data_api_key: str = ''
 
     @property
     def outbound_allowlist(self) -> set[str]:

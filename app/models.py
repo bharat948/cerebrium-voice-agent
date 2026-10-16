@@ -16,6 +16,7 @@ class PlanRequest(BaseModel):
     message: str = Field(min_length=5, max_length=2500)
     phone: str = ''
     agent_id: str = 'receptionist'
+    contact_id: str | None = None
 
 
 class PlanEdit(BaseModel):

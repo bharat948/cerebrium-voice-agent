@@ -4,8 +4,13 @@ from twilio.request_validator import RequestValidator
 from app.config import get_settings
 
 
-def require_api_key(x_api_key: str | None = Header(default=None)):
-    expected = get_settings().app_api_key
+def require_api_key(request: Request, x_api_key: str | None = Header(default=None)):
+    s = get_settings()
+    if s.auth_mode == 'google':
+        if s.google_owner_sub and request.session.get('owner_sub') == s.google_owner_sub:
+            return
+        raise HTTPException(status_code=401, detail='Owner Google login required')
+    expected = s.app_api_key
     if not expected or not secrets.compare_digest(x_api_key or '', expected):
         raise HTTPException(status_code=401, detail='Invalid API key')
 

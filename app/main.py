@@ -13,6 +13,14 @@ from twilio.rest import Client
 from twilio.twiml.voice_response import VoiceResponse
 
 from app import db
+from app.v3 import registry, memory, governance
+from app.v3.api import router as v3_router
+from app.v3.advanced_api import router as advanced_router, google_router
+from app.v3.voice_sandbox import router as voice_preview_router
+from app.v3.intelligence_api import router as intelligence_router
+from app.v3.auth import router as auth_router
+from app.v3.missions import worker_loop
+from starlette.middleware.sessions import SessionMiddleware
 from app.config import get_settings
 from app.models import AgentCreate, CallRequest, PlanEdit, PlanRequest, PreviewTurn, valid_phone
 from app.planner import build_plan, extract_phone, preview_reply, openai_completion, OpenAIProviderError
@@ -36,10 +44,40 @@ async def lifespan(app: FastAPI):
         raise RuntimeError('Twilio signature validation required in live mode')
     db.init_db()
     db.purge_expired(s.transcript_retention_days)
-    yield
+    task = asyncio.create_task(worker_loop()) if s.enable_background_worker else None
+    try:
+        yield
+    finally:
+        if task:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
-app = FastAPI(title='Voice Foundry API', version='0.2.0', lifespan=lifespan)
+app = FastAPI(title='Voice Foundry API', version='4.0.0-alpha1', lifespan=lifespan)
+app.add_middleware(SessionMiddleware, secret_key=get_settings().session_secret or get_settings().app_api_key,
+                   same_site='lax', https_only=get_settings().auth_mode=='google', max_age=3600*12)
+app.include_router(v3_router)
+app.include_router(intelligence_router)
+app.include_router(advanced_router)
+app.include_router(google_router)
+app.include_router(voice_preview_router)
+app.include_router(auth_router)
+
+@app.middleware('http')
+async def owner_origin_guard(request:Request, call_next):
+    s=get_settings()
+    if s.auth_mode=='google' and request.method in ('POST','PATCH','PUT','DELETE') and not request.url.path.startswith('/twilio/'):
+        origin=request.headers.get('origin')
+        if not origin:
+            from urllib.parse import urlsplit
+            referer=request.headers.get('referer','')
+            if referer:
+                parsed=urlsplit(referer)
+                origin=parsed.scheme+'://'+parsed.netloc
+        if not origin or origin.rstrip('/')!=s.base_url:
+            return JSONResponse({'detail':'Cross-origin owner action blocked'},status_code=403)
+    return await call_next(request)
+
 app.mount('/assets', StaticFiles(directory=str(Path(__file__).resolve().parent.parent / 'web')), name='assets')
 
 
@@ -67,7 +105,7 @@ async def homepage():
 
 @app.get('/health')
 async def health():
-    return {'status': 'ok', 'version': '0.2.0'}
+    return {'status': 'ok', 'version': '4.0.0-alpha1'}
 
 
 @app.get('/api/config', dependencies=[Depends(api_auth)])
@@ -102,7 +140,12 @@ async def get_plans():
 async def create_plan(payload: PlanRequest):
     if not db.one('SELECT id FROM agents WHERE id=?', (payload.agent_id,)):
         raise HTTPException(404, 'Agent not found')
-    phone = extract_phone(payload.message, payload.phone)
+    if payload.contact_id:
+        contact = db.one('SELECT * FROM contacts WHERE id=? AND active=1',(payload.contact_id,))
+        if not contact: raise HTTPException(404,'Contact not found')
+        phone = contact['phone']
+    else:
+        phone = extract_phone(payload.message, payload.phone)
     if not valid_phone(phone):
         raise HTTPException(422, 'Provide recipient phone in E.164 format, e.g. +14155552671')
     try:
@@ -156,10 +199,21 @@ async def place_call(payload: CallRequest):
     if plan['state'] != 'draft':
         raise HTTPException(409, 'This plan has already been used')
     if not s.demo_mode:
+        try:governance.ensure_budget(plan['agent_id'],requested_usd=0.10)
+        except governance.PolicyViolation as exc:raise HTTPException(429,str(exc)) from None
         if not s.ready_for_calls(voice_engine):
             raise HTTPException(400, f'{voice_engine} credentials or PUBLIC_BASE_URL not configured')
-        if plan['phone'] not in s.outbound_allowlist:
-            raise HTTPException(403, 'Recipient is not in ALLOWED_OUTBOUND_NUMBERS')
+        contact = db.one('SELECT * FROM contacts WHERE phone=? AND active=1',(plan['phone'],))
+        if not (contact and contact['outbound_consent']) and plan['phone'] not in s.outbound_allowlist:
+            raise HTTPException(403,'Recipient must have recorded outbound consent in Contacts or be in the legacy allowlist')
+        config = registry.get_config(plan['agent_id'])
+        if config and config['access']=='private' and plan['agent_id']!='receptionist':
+            if not contact or contact['phone'] != s.owner_phone:
+                raise HTTPException(403,'Private agent can only call the verified owner phone')
+        if config and config['access']=='shared':
+            if not contact or not db.one('SELECT agent_id FROM agent_contact_permissions WHERE agent_id=? AND contact_id=?',
+                                      (plan['agent_id'],contact['id'])):
+                raise HTTPException(403,'Contact not authorized to use shared agent')
         concurrent = db.one("SELECT count(*) AS n FROM calls WHERE status IN ('queued','ringing','in-progress') AND mode='live'")['n']
         if concurrent >= s.max_concurrent_calls:
             raise HTTPException(429, 'Concurrent-call limit reached')
@@ -190,6 +244,7 @@ async def place_call(payload: CallRequest):
             ))
         db.execute('UPDATE calls SET twilio_sid=? WHERE id=?', (created.sid, call['id']))
         db.add_event(call['id'], 'state', 'Twilio accepted outbound call')
+        governance.record_cost('voice','outbound_call_reservation',estimated_usd=0.10,agent_id=plan['agent_id'],call_id=call['id'])
     except Exception as exc:
         log.exception('Twilio call creation failed')
         db.execute('UPDATE calls SET status=?,error=?,ended_at=? WHERE id=?',
@@ -289,6 +344,13 @@ async def twilio_voice(request: Request):
             return Response(str(response), media_type='application/xml')
         caller = str(values.get('From', 'unknown'))
         agent_id = 'receptionist'
+        contact = db.one('SELECT * FROM contacts WHERE phone=? AND active=1',(caller,))
+        if contact:
+            permissions=db.many('SELECT agent_id FROM agent_contact_permissions WHERE contact_id=? ORDER BY agent_id',(contact['id'],))
+            if len(permissions)==1:
+                candidate=permissions[0]['agent_id']
+                config=registry.get_config(candidate)
+                if config and config['access']=='shared': agent_id=candidate
         plan = db.insert_plan(agent_id, caller, 'Help caller with their request',
                               ['Disclose AI identity and greet the caller', 'Understand their request',
                                'Answer questions without inventing commitments', 'Summarize next steps'],
