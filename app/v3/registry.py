@@ -32,7 +32,7 @@ def default_config(agent, template='custom'):
         'personality':t.get('personality','Professional, inquisitive, concise and respectful.'),
         'instructions':agent['instructions'], 'playbook':t.get('playbook',[]),
         'tools':t.get('tools',[]), 'memory_enabled':True,
-        'integrations': t.get('integrations', db.get_agent_integrations(agent['id']) if agent.get('id') else []),
+        'integrations': t.get('integrations', []),
         'backchannel_policy':'Use short acknowledgments sparingly; avoid repeated filler.',
         'interruption_policy':'Stop talking when interrupted and follow the revised intent.',
         'delegation_policy':'For complicated research, explain the need for a background task and request permission before emailing.',
@@ -46,7 +46,11 @@ def get_config(agent_id):
     agent = db.one('SELECT * FROM agents WHERE id=?',(agent_id,))
     if not agent: return None
     release = latest(agent_id)
-    return json.loads(release['configuration']) if release else default_config(agent)
+    cfg = json.loads(release['configuration']) if release else default_config(agent)
+    if 'integrations' not in cfg:
+        try: cfg['integrations'] = db.get_agent_integrations(agent_id)
+        except Exception: cfg['integrations'] = []
+    return cfg
 
 def create_draft(agent_id, changes, template=None):
     agent = db.one('SELECT * FROM agents WHERE id=?',(agent_id,))

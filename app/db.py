@@ -36,7 +36,14 @@ def engine():
         if _engine is not None:
             _engine.dispose()
         if url.startswith('sqlite:///') and ':memory:' not in url:
-            Path(url.removeprefix('sqlite:///')).parent.mkdir(parents=True, exist_ok=True)
+            db_path = Path(url.removeprefix('sqlite:///'))
+            try:
+                db_path.parent.mkdir(parents=True, exist_ok=True)
+            except (PermissionError, OSError):
+                fallback_path = Path('./data') / db_path.name
+                fallback_path.parent.mkdir(parents=True, exist_ok=True)
+                url = f'sqlite:///{fallback_path.as_posix()}'
+
         _engine = create_engine(url, pool_pre_ping=True,
                                 connect_args={'timeout': 15} if url.startswith('sqlite:') else {},
                                 **({'poolclass': StaticPool} if url.endswith('/:memory:') else {}))
