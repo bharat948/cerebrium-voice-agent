@@ -19,6 +19,7 @@ from app.v3.advanced_api import router as advanced_router, google_router
 from app.v3.voice_sandbox import router as voice_preview_router
 from app.v3.intelligence_api import router as intelligence_router
 from app.v3.auth import router as auth_router
+from app.v3.integrations_api import router as integrations_router
 from app.v3.missions import worker_loop
 from starlette.middleware.sessions import SessionMiddleware
 from app.config import get_settings
@@ -63,6 +64,7 @@ app.include_router(advanced_router)
 app.include_router(google_router)
 app.include_router(voice_preview_router)
 app.include_router(auth_router)
+app.include_router(integrations_router)
 
 @app.middleware('http')
 async def owner_origin_guard(request:Request, call_next):

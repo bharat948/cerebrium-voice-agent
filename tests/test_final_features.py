@@ -120,6 +120,16 @@ def test_live_session_tool_contract(setup):
     tools=start['session']['delegation']['responses']['tools']
     assert any(t['name']=='knowledge_search' for t in tools)
     assert all(t['type']=='function' and t['strict'] for t in tools)
+    for tool in tools:
+        params = tool['parameters']
+        assert params['type'] == 'object'
+        assert isinstance(params['properties'], dict)
+        assert isinstance(params['required'], list)
+        assert set(params['properties'].keys()) == set(params['required'])
+    ks = next(t for t in tools if t['name'] == 'knowledge_search')
+    assert ks['parameters']['properties'] == {'query': {'type': 'string'}}
+    assert ks['parameters']['required'] == ['query']
+    assert ks['description'] == 'Search the agent authorized document knowledge base'
 
 
 def test_advanced_api_requires_auth(setup):

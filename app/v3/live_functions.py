@@ -35,12 +35,41 @@ def definitions(config,recognized_contact=False):
     if 'calendar' in tools:
         tools.add('calendar_check')
         if recognized_contact:tools.add('appointment_proposal')
-    return [
-      {'type':'function','name':name,'description':DEFINITIONS[name][0],
-       'parameters':{'type':'object','properties':schema,'required':list(schema),'additionalProperties':False},
+    defs = [
+      {'type':'function','name':name,'description':desc,
+       'parameters':{'type':'object','properties':props,'required':list(props),'additionalProperties':False},
        'strict':True}
-      for name,schema in DEFINITIONS.items() if name in tools
+      for name,(desc,props) in DEFINITIONS.items() if name in tools
     ]
+    # Add tools from authorized integrations
+    try:
+        from app.integrations import manager as int_mgr
+        agent_id = config.get('id') or config.get('agent_id')
+        assigned_integrations = config.get('integrations')
+        if assigned_integrations is not None:
+            for p_id in assigned_integrations:
+                p = int_mgr.get_provider(p_id)
+                if p and p.is_connected():
+                    for t in p.get_tools():
+                        defs.append({
+                            'type':'function',
+                            'name':t.name,
+                            'description':t.description,
+                            'parameters':t.parameters,
+                            'strict':False
+                        })
+        elif agent_id:
+            for t in int_mgr.get_agent_permitted_tools(agent_id):
+                defs.append({
+                    'type':'function',
+                    'name':t['name'],
+                    'description':t['description'],
+                    'parameters':t['parameters'],
+                    'strict':False
+                })
+    except Exception:
+        pass
+    return defs
 
 
 async def run(agent_id,contact,requested_name,arguments,config):
@@ -48,6 +77,28 @@ async def run(agent_id,contact,requested_name,arguments,config):
     allowed={item['name'] for item in definitions(config,bool(contact))}
     if requested_name not in allowed:return {'status':'denied','reason':'Tool is not assigned to this agent'}
     if not isinstance(arguments,dict):return {'status':'invalid','reason':'Arguments must be an object'}
+
+    # 1. Route integration tools first
+    try:
+        from app.integrations import manager as int_mgr
+        target_provider = None
+        for p in int_mgr._PROVIDERS.values():
+            if any(t.name == requested_name for t in p.get_tools()):
+                target_provider = p
+                break
+        if target_provider:
+            config_integrations = config.get('integrations')
+            if config_integrations is not None:
+                if target_provider.id not in config_integrations:
+                    return {'status':'denied','reason':f"Integration '{target_provider.id}' not assigned to this agent"}
+            elif not int_mgr.is_agent_authorized(agent_id, target_provider.id):
+                return {'status':'denied','reason':f"Integration '{target_provider.id}' not assigned to this agent"}
+            return await int_mgr.execute_agent_tool(agent_id, requested_name, arguments, context={'contact':contact})
+    except Exception as exc:
+        log.warning('Integration tool error agent=%s tool=%s: %s', agent_id, requested_name, exc)
+        return {'status':'unavailable','reason':str(exc)}
+
+    # 2. Built-in tools
     if requested_name in {'calendar_check','appointment_proposal'}:
         required=['starts_at','ends_at'] + (['title'] if requested_name=='appointment_proposal' else [])
         if any(not isinstance(arguments.get(k),str) or not 2 <= len(arguments[k]) <= 500 for k in required):

@@ -35,6 +35,7 @@
       <button class="nav-item" data-page="knowledge"><span>▤</span> Knowledge</button>
       <button class="nav-item" data-page="operations"><span>◫</span> Operations</button>
       <button class="nav-item" data-page="calendar"><span>▦</span> Calendar</button>
+      <button class="nav-item" data-page="integrations"><span>⧉</span> Integrations</button>
       <button class="nav-item" data-page="settings"><span>⚙</span> Configuration</button>
     </nav>
     <div class="sidebar-bottom"><div class="online-dot"></div><div><strong id="runtime-label">Preview environment</strong><small id="model-label">Connecting...</small></div></div>
@@ -73,7 +74,11 @@
 <label>Expression<select id="studio-expression"><option value="reserved">Reserved</option><option value="balanced">Balanced</option><option value="expressive">Expressive</option></select></label>
 <label>Thinking pauses<select id="studio-pause"><option value="brief">Brief</option><option value="patient">Patient</option><option value="extended">Extended</option></select></label>
 <label>Interruption response<select id="studio-interrupt"><option value="low">Low sensitivity</option><option value="normal">Normal</option><option value="high">High sensitivity</option></select></label>
-</div><button class="btn outline wide" type="button" id="studio-preview">Preview compiled prompt</button><button class="btn primary wide" id="studio-save">Save draft</button></form><pre class="prompt-preview" id="prompt-preview" hidden></pre><button class="btn dark wide" id="studio-publish" type="button" disabled>Publish saved draft</button><p class="tiny muted">Draft edits never affect published agents until approved. Active calls pin their release version.</p>
+</div>
+<div class="v4-policy"><h3>3rd-Party Integrations &amp; Tools</h3><p class="muted tiny">Enable access to connected external tools for this agent.</p>
+<div id="studio-integrations-checkboxes" class="checkbox-group"></div>
+</div>
+<button class="btn outline wide" type="button" id="studio-preview">Preview compiled prompt</button><button class="btn primary wide" id="studio-save">Save draft</button></form><pre class="prompt-preview" id="prompt-preview" hidden></pre><button class="btn dark wide" id="studio-publish" type="button" disabled>Publish saved draft</button><p class="tiny muted">Draft edits never affect published agents until approved. Active calls pin their release version.</p>
 <div class="v4-policy"><h3>Human review & improvement</h3><p class="muted tiny">Collect feedback, propose a safe change, review it, then publish manually.</p>
 <label>Voice test rating<select id="studio-rating"><option value="5">5 · Excellent</option><option value="4">4 · Good</option><option value="3">3 · Average</option><option value="2">2 · Needs work</option><option value="1">1 · Poor</option></select></label>
 <label>Review notes<textarea id="studio-review-note" rows="3" maxlength="2000" placeholder="What should sound better?"></textarea></label>
@@ -83,8 +88,36 @@
       <section id="page-missions" class="page" hidden><div class="page-title"><p class="eyebrow">BACKGROUND INTELLIGENCE</p><h1>Mission <em>control.</em></h1><p class="muted">Research work survives restarts and requires verified email consent before delivery.</p></div><div class="agent-layout"><div class="panel"><div class="panel-head"><h3>Research missions</h3><button class="text-btn" id="missions-refresh">Refresh ↻</button></div><div id="mission-list"></div></div><div class="panel"><div class="panel-head"><h3>Delegate research</h3></div><form id="mission-form" class="agent-form"><label>Agent<select id="mission-agent"></select></label><label>Recipient<select id="mission-contact" required></select></label><label>Research objective<textarea id="mission-objective" rows="5" minlength="10" required placeholder="Research key AI developments in India this week, cite sources and provide a concise comparison."></textarea></label><button class="btn primary wide">Queue authorized research</button></form><p class="tiny muted">Requires configured search, OpenAI and SMTP. Incomplete work is marked blocked, not fabricated.</p></div></div></section>
 
       <section id="page-voice-lab" class="page" hidden><div class="page-title"><p class="eyebrow">LIVE CONVERSATION TESTING</p><h1>Voice <em>Lab.</em></h1><p class="muted">Browser microphone sandbox. No Twilio charges; no persistent call data or external actions.</p></div>
-        <div class="agent-layout"><div class="panel"><div class="panel-head"><h3>Voice preview</h3><span class="quiet-badge" id="voice-status">DISCONNECTED</span></div><div class="agent-form"><label>Agent<select id="voice-agent"></select></label><div class="fields-row"><button class="btn primary" id="voice-start">Start talking</button><button class="btn outline" id="voice-stop" disabled>Stop preview</button></div><p class="tiny muted">Microphone access requires HTTPS or localhost. Model output is streamed in 8 kHz PCMU; demo mode never calls OpenAI.</p></div></div>
-        <div class="panel"><div class="panel-head"><h3>Live transcript</h3></div><div id="voice-captions" class="scroll-area muted">No preview in progress.</div></div></div>
+        <div class="agent-layout voice-lab-layout">
+          <div class="panel voice-preview-panel">
+            <div class="panel-head"><h3>Voice preview</h3><span class="quiet-badge" id="voice-status">DISCONNECTED</span></div>
+            <div class="agent-form">
+              <label>Select conversational agent<select id="voice-agent"></select></label>
+              <div id="voice-agent-card" class="selected-agent-card"></div>
+              <div class="fields-row">
+                <button class="btn primary" id="voice-start">Start talking</button>
+                <button class="btn outline" id="voice-stop" disabled>Stop preview</button>
+              </div>
+              <p class="tiny muted">Microphone access requires HTTPS or localhost. Model output is streamed in 8 kHz PCMU; demo mode never calls OpenAI.</p>
+            </div>
+          </div>
+          <div class="panel voice-transcript-panel">
+            <div class="panel-head">
+              <h3>Live transcript</h3>
+              <div class="panel-actions">
+                <span class="quiet-badge" id="voice-turn-count">0 TURNS</span>
+                <button class="text-btn" id="voice-clear-btn" type="button" title="Clear current transcript">Clear transcript ↻</button>
+              </div>
+            </div>
+            <div id="voice-captions" class="voice-chat-feed">
+              <div class="empty-transcript" id="voice-empty-state">
+                <div class="tiny-orb">🎙️</div>
+                <h3>No preview in progress</h3>
+                <p class="muted small">Select an agent and click &ldquo;Start talking&rdquo;. Real-time audio stream from you and the agent will render here conversationally.</p>
+              </div>
+            </div>
+          </div>
+        </div>
       </section>
       <section id="page-knowledge" class="page" hidden><div class="page-title"><p class="eyebrow">VERIFIED SOURCE LIBRARY</p><h1>Agent <em>knowledge.</em></h1><p class="muted">Ingest documents and search attributed, permission-scoped knowledge. Unverified documents remain provisional.</p></div>
        <div class="agent-layout"><div class="panel"><div class="panel-head"><h3>Document sources</h3><button class="text-btn" id="knowledge-refresh">Refresh</button></div><div id="knowledge-list" class="scroll-area"></div></div>
@@ -97,6 +130,25 @@
       </section>
       <section id="page-calendar" class="page" hidden><div class="page-title"><p class="eyebrow">SCHEDULE + PROVIDER INTEGRATIONS</p><h1>Appointment <em>desk.</em></h1><p class="muted">Verify local slots; owner-approved bookings only. Google connection is separate from Google Sign-In.</p></div>
        <div class="agent-layout"><div class="panel"><div class="panel-head"><h3>Calendar records</h3><button class="text-btn" id="calendar-refresh">Refresh</button></div><div id="calendar-list" class="scroll-area"></div></div><div class="panel"><div class="panel-head"><h3>Google services</h3></div><p id="google-integration-status" class="muted">Checking connection...</p><a class="btn outline wide" href="/auth/google/connect">Connect Google Contacts & Calendar</a><button class="btn outline wide" id="google-import">Import Google contacts</button><p class="tiny muted">Requires owner Google OAuth, encrypted refresh-token storage, and configured Google APIs. Imported contacts do not receive implicit call/email consent.</p></div></div>
+      </section>
+      <section id="page-integrations" class="page" hidden>
+        <div class="page-title"><p class="eyebrow">ECOSYSTEM / 3RD-PARTY SERVICES</p><h1>Integrations <em>hub.</em></h1><p class="muted">Connect external tools and grant granular tool permissions to your AI voice agents.</p></div>
+        <div class="section-row"><h2>Connected &amp; Available Services</h2><button class="text-btn" id="integrations-refresh">Refresh ↻</button></div>
+        <div class="integrations-grid" id="integrations-grid"></div>
+        <div id="integration-connect-modal" class="modal-backdrop" hidden>
+          <div class="modal-card">
+            <div class="panel-head"><h3 id="connect-modal-title">Connect Integration</h3><button class="close-btn" id="connect-modal-close" type="button">×</button></div>
+            <form id="integration-connect-form" class="agent-form">
+              <input type="hidden" id="connect-provider-id" />
+              <div id="connect-fields"></div>
+              <p class="tiny muted" id="connect-modal-hint"></p>
+              <div class="actions-row">
+                <button type="button" class="btn outline" id="connect-modal-cancel">Cancel</button>
+                <button type="submit" class="btn primary" id="connect-modal-submit">Connect ↗</button>
+              </div>
+            </form>
+          </div>
+        </div>
       </section>
       <section id="page-settings" class="page" hidden><div class="page-title"><p class="eyebrow">UNDER THE HOOD</p><h1>Workspace <em>settings.</em></h1><p class="muted">Connection health and operating limits. Secrets stay in your .env, not in the browser.</p></div><div class="settings-grid"><div class="panel settings-panel"><div class="panel-head"><h3>Service readiness</h3><span class="online-dot"></span></div><div id="settings-readiness"></div></div><div class="panel settings-panel"><div class="panel-head"><h3>Setup checklist</h3></div><div class="setup-row"><b>01</b><span>Copy <code>.env.example</code> to <code>.env</code></span></div><div class="setup-row"><b>02</b><span>Configure Twilio + OpenAI (Deepgram optional for fallback)</span></div><div class="setup-row"><b>03</b><span>Set PUBLIC_BASE_URL to Render HTTPS origin (automatic with Blueprint)</span></div><div class="setup-row"><b>04</b><span>Allowlist recipients, set DEMO_MODE=false</span></div><div class="setup-row"><b>05</b><span>Call a number or connect Twilio's incoming webhook</span></div><p class="tiny muted">Full instructions are in README.md and README.md.</p></div></div></section>
     </div>

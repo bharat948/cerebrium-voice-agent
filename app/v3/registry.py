@@ -32,6 +32,7 @@ def default_config(agent, template='custom'):
         'personality':t.get('personality','Professional, inquisitive, concise and respectful.'),
         'instructions':agent['instructions'], 'playbook':t.get('playbook',[]),
         'tools':t.get('tools',[]), 'memory_enabled':True,
+        'integrations': t.get('integrations', db.get_agent_integrations(agent['id']) if agent.get('id') else []),
         'backchannel_policy':'Use short acknowledgments sparingly; avoid repeated filler.',
         'interruption_policy':'Stop talking when interrupted and follow the revised intent.',
         'delegation_policy':'For complicated research, explain the need for a background task and request permission before emailing.',
@@ -53,7 +54,7 @@ def create_draft(agent_id, changes, template=None):
     active = get_config(agent_id)
     if template in TEMPLATES: active = default_config(agent,template)
     allowed = {'name','role','language','voice','access','personality','instructions','playbook','tools','memory_enabled',
-               'backchannel_policy','interruption_policy','delegation_policy','behavior_policy'}
+               'backchannel_policy','interruption_policy','delegation_policy','behavior_policy','integrations'}
     if unknown:=set(changes)-allowed: raise ValueError('Unsupported properties: '+','.join(sorted(unknown)))
     merged = {**active, **changes}
     for field, maxlen in {'name':80,'role':160,'personality':1600,'instructions':5000,
@@ -63,6 +64,9 @@ def create_draft(agent_id, changes, template=None):
             raise ValueError(f'Invalid {field} field')
     if not isinstance(merged.get('playbook'),list) or len(merged['playbook'])>16 or any(not isinstance(p,str) or len(p)>300 for p in merged['playbook']):
         raise ValueError('Invalid playbook')
+    if 'integrations' in merged:
+        if not isinstance(merged['integrations'], list) or any(not isinstance(i, str) for i in merged['integrations']):
+            raise ValueError('Invalid integrations list')
     if merged['access'] not in ('private','shared','public'): raise ValueError('Invalid access level')
     if not isinstance(merged['tools'],list) or any(t not in ('news_rss','web_search','market_quote','tasks','calendar') for t in merged['tools']):
         raise ValueError('Unsupported tool')
@@ -80,6 +84,9 @@ def publish(agent_id,release_id):
         if not row or row['status']!='draft': raise ValueError('Draft not found')
         c.execute("UPDATE agent_releases SET status='archived' WHERE agent_id=? AND status='published'",(agent_id,))
         c.execute("UPDATE agent_releases SET status='published' WHERE id=?",(release_id,))
+    cfg = json.loads(row['configuration'])
+    if 'integrations' in cfg and isinstance(cfg['integrations'], list):
+        db.set_agent_integrations(agent_id, cfg['integrations'])
     return {'id':release_id,'agent_id':agent_id,'version':row['version'],'status':'published'}
 
 def compile_prompt(agent,plan=None,contact=None,memories=(),release_id=None):
@@ -103,6 +110,12 @@ def compile_prompt(agent,plan=None,contact=None,memories=(),release_id=None):
         'DELEGATION POLICY: '+config['delegation_policy'],
         voice_behavior.instructions(config.get('behavior_policy',{})),
     ]
+    integrations_list = config.get('integrations', [])
+    if integrations_list:
+        sections.append(
+            'PERMITTED 3RD-PARTY INTEGRATIONS: ' + ', '.join(integrations_list) +
+            '. You have permission to access these connected external services via your authorized tools.'
+        )
     if contact:
         sections.append('CALLER DISPLAY NAME: '+contact['name'][:80]+'; language preference: '+contact['language'][:40]+'. These values are unverified for sensitive disclosure.')
     if memory_text:
@@ -126,6 +139,6 @@ def rollback_to(agent_id:str, archived_release_id:str):
     previous=json.loads(old['configuration'])
     config={key: previous[key] for key in
             ('name','role','language','voice','access','personality','instructions','playbook',
-             'tools','memory_enabled','backchannel_policy','interruption_policy','delegation_policy','behavior_policy') if key in previous}
+             'tools','memory_enabled','backchannel_policy','interruption_policy','delegation_policy','behavior_policy','integrations') if key in previous}
     draft=create_draft(agent_id,config)
     return {'restored_from':archived_release_id,'draft':draft}

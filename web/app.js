@@ -31,12 +31,13 @@ $('auth-form').addEventListener('submit', async(e)=>{
 });
 $('logout-btn').addEventListener('click',async()=>{await fetch('/auth/logout',{method:'POST'}); state.authenticated=false;state.key='';sessionStorage.removeItem('vf_key');$('app').hidden=true;$('auth-overlay').hidden=false;$('auth-input').value='';});
 function navigate(page){
-  if(!['dashboard','compose','history','agents','contacts','missions','voice-lab','knowledge','operations','calendar','settings'].includes(page))return;
+  if(!['dashboard','compose','history','agents','contacts','missions','voice-lab','knowledge','operations','calendar','integrations','settings'].includes(page))return;
   state.page=page;
   document.querySelectorAll('.page').forEach(el=>el.hidden=el.id!==`page-${page}`);
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.toggle('active',el.dataset.page===page));
-  $('breadcrumb').textContent=({dashboard:'Overview',compose:'Call studio',history:'Call history',agents:'Agent Studio',contacts:'Contacts',missions:'Missions','voice-lab':'Voice Lab',knowledge:'Knowledge',operations:'Operations',calendar:'Calendar',settings:'Configuration'})[page];
+  $('breadcrumb').textContent=({dashboard:'Overview',compose:'Call studio',history:'Call history',agents:'Agent Studio',contacts:'Contacts',missions:'Missions','voice-lab':'Voice Lab',knowledge:'Knowledge',operations:'Operations',calendar:'Calendar',integrations:'Integrations',settings:'Configuration'})[page];
   if(page==='history') renderCallDetail();
+  if(page==='integrations') renderIntegrations();
   location.hash=page;
 }
 document.addEventListener('click',(e)=>{
@@ -63,6 +64,10 @@ function render(){
  $('recent-calls').innerHTML=state.calls.length?state.calls.slice(0,5).map(callRow).join(''):'<div class="empty-message">No calls yet. Open the call studio to prepare your first mission.</div>';
  $('history-items').innerHTML=state.calls.length?state.calls.map(callRow).join(''):'<div class="empty-message">Your call history will appear here.</div>';
  $('mission-agent').innerHTML=state.agents.map(a=>`<option value="${safe(a.id)}">${safe(a.name)}</option>`).join('');
+ if($('voice-agent')&&!$('voice-agent').children.length){
+   $('voice-agent').innerHTML=state.agents.map(a=>`<option value="${safe(a.id)}">${safe(a.name)} · ${safe(a.role)}</option>`).join('');
+   renderSelectedVoiceAgent();
+ }
  $('agent-select').innerHTML=state.agents.map(a=>`<option value="${safe(a.id)}">${safe(a.name)} · ${safe(a.role)}</option>`).join('');
  $('contact-count').textContent=`${state.contacts.length} CONTACTS`;
  $('contact-list').innerHTML=state.contacts.length ? state.contacts.map(c=>`<div class="agent-card"><span class="row-symbol">♧</span><div><h3>${safe(c.name)}</h3><p>${safe(c.phone)} · ${safe(c.language)}</p><small>${c.outbound_consent?'Outbound consent recorded':'Outbound not authorized'} · ${c.email_consent?'Email consent recorded':'No email consent'} · ${c.memory_opt_in?'Memory enabled':'Memory disabled'}</small><p><button class="btn outline" data-contact-consent="${safe(c.id)}">Consent settings</button> <button class="btn outline" data-contact-memory="${safe(c.id)}">Memories</button> <button class="btn outline" data-memory-policy="${safe(c.id)}">${c.memory_opt_in?'Disable memory':'Enable memory'}</button> <button class="btn outline" data-contact-deactivate="${safe(c.id)}">Deactivate</button></p></div></div>`).join('') : '<div class="empty-message">Add your first contact.</div>';
@@ -165,6 +170,13 @@ $('import-csv-btn').addEventListener('click',async()=>{
 });
 let studioAgentId=null,studioDraftId=null;
 document.addEventListener('click',async(e)=>{
+ const openStudio=e.target.closest('[data-open-studio-agent]');
+ if(openStudio){
+   const agentId=openStudio.dataset.openStudioAgent;
+   navigate('agents');
+   setTimeout(()=>{const btn=document.querySelector(`[data-edit-agent="${CSS.escape(agentId)}"]`);if(btn)btn.click();},60);
+   return;
+ }
  const btn=e.target.closest('[data-edit-agent]');if(!btn)return;
  studioAgentId=btn.dataset.editAgent;studioDraftId=null;$('studio-publish').disabled=true;
  try{
@@ -179,6 +191,22 @@ document.addEventListener('click',async(e)=>{
    $('studio-pace').value=b.pace||'adaptive';$('studio-initiative').value=b.initiative||'guided';
    $('studio-expression').value=b.expression||'balanced';$('studio-pause').value=b.pause_tolerance||'patient';
    $('studio-interrupt').value=b.interruption_sensitivity||'normal';
+
+   // Populate integration access checkboxes
+   const activeIntegrations = c.integrations || [];
+   try {
+     const allIntegrations = await api('/api/v3/integrations');
+     const activeList = allIntegrations.filter(i => i.status === 'active');
+     $('studio-integrations-checkboxes').innerHTML = activeList.length ? activeList.map(i => `
+       <label>
+         <input type="checkbox" name="studio_integration" value="${safe(i.id)}" ${activeIntegrations.includes(i.id)?'checked':''}>
+         <span>${safe(i.name)} ${i.connected ? '<small class="tag-badge">Connected</small>' : '<small class="tag-badge muted">Offline</small>'}</span>
+       </label>
+     `).join('') : '<span class="muted tiny">No active integrations found. Connect services in the Integrations hub.</span>';
+   } catch {
+     $('studio-integrations-checkboxes').innerHTML = '<span class="muted tiny">Could not load integrations list.</span>';
+   }
+
    $('studio-editor').hidden=false;
    $('prompt-preview').hidden=true;
    $('studio-editor').scrollIntoView({behavior:'smooth',block:'nearest'});
@@ -191,7 +219,9 @@ $('studio-preview').addEventListener('click',async()=>{
 });
 $('studio-form').addEventListener('submit',async(e)=>{
  e.preventDefault();if(!studioAgentId)return;
+ const selectedIntegrations = Array.from(document.querySelectorAll('input[name="studio_integration"]:checked')).map(cb=>cb.value);
  const changes={personality:$('studio-personality').value.trim(),voice:$('studio-voice').value.trim(),language:$('studio-language').value.trim(),access:$('studio-access').value,
+ integrations:selectedIntegrations,
  behavior_policy:{pace:$('studio-pace').value,initiative:$('studio-initiative').value,expression:$('studio-expression').value,pause_tolerance:$('studio-pause').value,interruption_sensitivity:$('studio-interrupt').value}};
  try{
   const draft=await api(`/api/v3/agents/${studioAgentId}/drafts`,{method:'POST',body:JSON.stringify({changes})});
@@ -392,7 +422,12 @@ async function loadAdvanced(){
     $('calendar-list').innerHTML=calendar.length?calendar.map(e=>`<article class="advanced-row"><strong>${safe(e.title)}</strong><small>${safe(prettyTime(e.starts_at))} · ${safe(e.state)}</small></article>`).join(''):'<p class="muted">No local appointments.</p>';
     $('google-integration-status').textContent=google.connected?'Google services connected.':'Google services not connected.';
     const sel=state.agents.map(a=>`<option value="${safe(a.id)}">${safe(a.name)} · ${safe(a.role)}</option>`).join('');
+    const prevVoiceAgent=$('voice-agent')?.value;
     $('voice-agent').innerHTML=sel;$('knowledge-agent').innerHTML=sel;
+    if(prevVoiceAgent && state.agents.some(a=>a.id===prevVoiceAgent)){
+      $('voice-agent').value=prevVoiceAgent;
+    }
+    renderSelectedVoiceAgent();
     $('ops-call').innerHTML='<option value="">Choose active call</option>'+state.calls.filter(c=>['queued','initiated','ringing','in-progress'].includes(c.status)).map(c=>`<option value="${safe(c.id)}">${safe(c.phone)} · ${safe(c.status)}</option>`).join('');
   }catch(error){toast('Operations refresh: '+error.message,true);}
 }
@@ -449,17 +484,90 @@ function playPCMU(encoded){if(!previewAudio)return;
   const src=previewAudio.createBufferSource();src.buffer=buffer;src.connect(previewAudio.destination);
   nextPlay=Math.max(previewAudio.currentTime+0.04,nextPlay);src.start(nextPlay);nextPlay+=buffer.duration;
 }
-async function stopVoice(){try{previewSocket?.send(JSON.stringify({type:'stop'}));previewSocket?.close();}catch{}
+function renderSelectedVoiceAgent(){
+  const card=$('voice-agent-card');
+  if(!card)return;
+  const currentId=$('voice-agent')?.value;
+  const agent=state.agents.find(a=>a.id===currentId)||state.agents[0];
+  if(!agent){
+    card.innerHTML='<div class="muted small">No configured agent found. Add one in Agent Studio.</div>';
+    return;
+  }
+  const initial=safe((agent.name||'A').slice(0,1).toUpperCase());
+  const instr=safe(agent.instructions||'');
+  card.innerHTML=`
+    <div class="agent-card-header">
+      <div class="agent-card-avatar">${initial}</div>
+      <div class="agent-card-title">
+        <h4>${safe(agent.name)}</h4>
+        <span class="agent-role-pill">${safe(agent.role||'Voice Agent')}</span>
+      </div>
+    </div>
+    <div class="agent-card-badges">
+      <span class="agent-meta-chip"><span>🌐</span> Language: <strong>${safe(agent.language||'English')}</strong></span>
+      <span class="agent-meta-chip"><span>⚡</span> Engine: <strong>GPT-Live (8 kHz PCMU)</strong></span>
+      <span class="agent-meta-chip"><span>🛡️</span> Sandbox: <strong>Zero call charges</strong></span>
+    </div>
+    <div class="agent-instructions-preview">
+      <span class="preview-label">Core Persona &amp; Instructions</span>
+      <p title="${instr}">${instr||'No working instructions provided.'}</p>
+    </div>
+    <div class="agent-card-footer">
+      <button class="agent-studio-link" type="button" data-open-studio-agent="${safe(agent.id)}">Customize in Agent Studio ↗</button>
+    </div>`;
+}
+
+let voiceTranscriptState={
+  currentSpeaker:null,
+  currentBubbleTextEl:null,
+  currentPulseEl:null,
+  lastDeltaTime:0,
+  turnCount:0
+};
+
+function resetVoiceTranscriptState(){
+  if(voiceTranscriptState.currentPulseEl){
+    voiceTranscriptState.currentPulseEl.remove();
+    voiceTranscriptState.currentPulseEl=null;
+  }
+  voiceTranscriptState.currentSpeaker=null;
+  voiceTranscriptState.currentBubbleTextEl=null;
+  voiceTranscriptState.lastDeltaTime=0;
+}
+
+function clearVoiceTranscript(){
+  resetVoiceTranscriptState();
+  voiceTranscriptState.turnCount=0;
+  const turnCountEl=$('voice-turn-count');
+  if(turnCountEl) turnCountEl.textContent='0 TURNS';
+  const feed=$('voice-captions');
+  if(feed){
+    feed.innerHTML=`
+      <div class="empty-transcript" id="voice-empty-state">
+        <div class="tiny-orb">🎙️</div>
+        <h3>No preview in progress</h3>
+        <p class="muted small">Select an agent and click &ldquo;Start talking&rdquo;. Real-time audio stream from you and the agent will render here conversationally.</p>
+      </div>`;
+  }
+}
+
+async function stopVoice(){
+  try{previewSocket?.send(JSON.stringify({type:'stop'}));previewSocket?.close();}catch{}
   previewProcessor?.disconnect();previewStream?.getTracks().forEach(t=>t.stop());await previewAudio?.close();
   previewSocket=previewProcessor=previewStream=previewAudio=null;
-  $('voice-start').disabled=false;$('voice-stop').disabled=true;$('voice-status').textContent='DISCONNECTED';}
+  $('voice-start').disabled=false;$('voice-stop').disabled=true;$('voice-status').textContent='DISCONNECTED';
+  if($('voice-agent')) $('voice-agent').disabled=false;
+  resetVoiceTranscriptState();
+}
 $('voice-start').addEventListener('click',async()=>{
   $('voice-start').disabled=true;
+  if($('voice-agent')) $('voice-agent').disabled=true;
   try{
     const {token}=await api('/api/v3/voice/preview-token',{method:'POST',body:JSON.stringify({agent_id:$('voice-agent').value})});
     const url=`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/api/v3/voice/preview?token=${encodeURIComponent(token)}`;
     previewSocket=new WebSocket(url);$('voice-status').textContent='CONNECTING';
-    previewSocket.onmessage=async e=>{const msg=JSON.parse(e.data);
+    previewSocket.onmessage=async e=>{
+      const msg=JSON.parse(e.data);
       if(msg.type==='ready'){
         try{
           previewAudio=new AudioContext();await previewAudio.resume();previewStream=await navigator.mediaDevices.getUserMedia({audio:true});
@@ -468,24 +576,249 @@ $('voice-start').addEventListener('click',async()=>{
           let buffer=[],readPos=0;
           processor.onaudioprocess=e=>{
             const input=e.inputBuffer.getChannelData(0),step=previewAudio.sampleRate/8000;
-            while(readPos<input.length){const idx=Math.floor(readPos);buffer.push(pcmULaw(input[idx]||0));readPos+=step;
-              if(buffer.length>=320){if(previewSocket?.readyState===1){const bytes=String.fromCharCode(...buffer.splice(0,320));previewSocket.send(JSON.stringify({type:'audio',audio:btoa(bytes)}));}else buffer=[];}
-            }readPos-=input.length;
+            while(readPos<input.length){
+              const idx=Math.floor(readPos);buffer.push(pcmULaw(input[idx]||0));readPos+=step;
+              if(buffer.length>=320){
+                if(previewSocket?.readyState===1){
+                  const bytes=String.fromCharCode(...buffer.splice(0,320));
+                  previewSocket.send(JSON.stringify({type:'audio',audio:btoa(bytes)}));
+                }else buffer=[];
+              }
+            }
+            readPos-=input.length;
           };
           source.connect(processor);processor.connect(muted);muted.connect(previewAudio.destination);
           $('voice-status').textContent='LIVE';$('voice-stop').disabled=false;
         }catch(err){toast('Microphone: '+err.message,true);await stopVoice();}
-      }else if(msg.type==='audio')playPCMU(msg.audio);
-      else if(msg.type==='caption'){
-        const line=document.createElement('p');line.textContent=`${msg.speaker}: ${msg.delta}`;$('voice-captions').append(line);
-        $('voice-captions').scrollTop=$('voice-captions').scrollHeight;
-      }else if(msg.type==='error')toast(msg.detail,true);
-      else if(msg.type==='info'){$('voice-captions').textContent=msg.detail;$('voice-stop').disabled=false;}
+      }else if(msg.type==='audio'){
+        playPCMU(msg.audio);
+      }else if(msg.type==='caption'){
+        const delta=msg.delta;
+        if(!delta) return;
+        const speaker=msg.speaker;
+        const now=Date.now();
+        const feed=$('voice-captions');
+        
+        const empty=$('voice-empty-state');
+        if(empty) empty.remove();
+        
+        const shouldCreateNew=!voiceTranscriptState.currentBubbleTextEl ||
+          voiceTranscriptState.currentSpeaker!==speaker ||
+          (now-voiceTranscriptState.lastDeltaTime)>2500;
+          
+        if(shouldCreateNew){
+          if(voiceTranscriptState.currentPulseEl){
+            voiceTranscriptState.currentPulseEl.remove();
+            voiceTranscriptState.currentPulseEl=null;
+          }
+          
+          voiceTranscriptState.turnCount++;
+          const turnCountEl=$('voice-turn-count');
+          if(turnCountEl) turnCountEl.textContent=`${voiceTranscriptState.turnCount} TURN${voiceTranscriptState.turnCount===1?'':'S'}`;
+          
+          const currentAgentId=$('voice-agent')?.value;
+          const currentAgent=state.agents.find(a=>a.id===currentAgentId);
+          const agentName=currentAgent?.name||'Agent';
+          const displayName=speaker==='assistant'?agentName:'You';
+          const avatarLetter=speaker==='assistant'?safe(agentName.slice(0,1).toUpperCase()):'YOU';
+          const timeStr=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+          
+          const turnDiv=document.createElement('div');
+          turnDiv.className=`voice-chat-turn ${speaker}`;
+          turnDiv.innerHTML=`
+            <div class="voice-chat-meta">
+              <span class="voice-chat-avatar">${avatarLetter}</span>
+              <strong class="voice-chat-name">${safe(displayName)}</strong>
+              <span class="voice-chat-time">${timeStr}</span>
+            </div>
+            <div class="voice-chat-bubble">
+              <span class="voice-chat-text"></span><span class="streaming-pulse" aria-hidden="true"></span>
+            </div>`;
+          
+          feed.append(turnDiv);
+          voiceTranscriptState.currentSpeaker=speaker;
+          voiceTranscriptState.currentBubbleTextEl=turnDiv.querySelector('.voice-chat-text');
+          voiceTranscriptState.currentPulseEl=turnDiv.querySelector('.streaming-pulse');
+        }
+        
+        const textEl=voiceTranscriptState.currentBubbleTextEl;
+        const currentText=textEl.textContent;
+        const needsSpace=currentText.length>0 &&
+          !/\s$/.test(currentText) &&
+          !/^\s/.test(delta) &&
+          !/^[.,!?;:'")\]]/.test(delta);
+          
+        textEl.textContent+=(needsSpace?' ':'')+delta;
+        voiceTranscriptState.lastDeltaTime=now;
+        feed.scrollTop=feed.scrollHeight;
+      }else if(msg.type==='error'){
+        toast(msg.detail,true);
+      }else if(msg.type==='info'){
+        const feed=$('voice-captions');
+        const empty=$('voice-empty-state');
+        if(empty) empty.remove();
+        const notice=document.createElement('div');
+        notice.className='voice-system-notice';
+        notice.textContent=msg.detail;
+        feed.append(notice);
+        feed.scrollTop=feed.scrollHeight;
+        $('voice-stop').disabled=false;
+      }
     };
     previewSocket.onerror=()=>toast('WebSocket voice preview failed',true);
-    previewSocket.onclose=()=>{if(previewSocket)$('voice-status').textContent='ENDED';$('voice-start').disabled=false;};
-  }catch(err){toast(err.message,true);await stopVoice();}
+    previewSocket.onclose=()=>{
+      if(previewSocket)$('voice-status').textContent='ENDED';
+      $('voice-start').disabled=false;
+      if($('voice-agent')) $('voice-agent').disabled=false;
+      resetVoiceTranscriptState();
+    };
+  }catch(err){
+    toast(err.message,true);
+    if($('voice-agent')) $('voice-agent').disabled=false;
+    await stopVoice();
+  }
 });
 $('voice-stop').addEventListener('click',stopVoice);
+$('voice-agent')?.addEventListener('change',renderSelectedVoiceAgent);
+$('voice-clear-btn')?.addEventListener('click',clearVoiceTranscript);
 
 $('contact-select').addEventListener('change',()=>{const contact=state.contacts.find(c=>c.id===$('contact-select').value);if(contact)$('phone-input').value=contact.phone;});
+
+
+/* Integrations Hub Implementation */
+async function renderIntegrations() {
+  const grid = $('integrations-grid');
+  if(!grid) return;
+  grid.innerHTML = '<div class="muted small">Loading integrations...</div>';
+  try {
+    const list = await api('/api/v3/integrations');
+    grid.innerHTML = list.map(item => {
+      const isConnected = item.connected;
+      const isCatalog = item.status === 'catalog';
+      const statusClass = isConnected ? 'connected' : (isCatalog ? 'catalog' : 'disconnected');
+      const statusLabel = isConnected ? '● Connected' : (isCatalog ? 'Coming Soon' : '○ Not connected');
+      const icon = item.id === 'google' ? 'G' : (item.id === 'linear' ? 'L' : (item.id === 'outlook' ? 'O' : (item.id === 'teams' ? 'T' : (item.id === 'notion' ? 'N' : 'J'))));
+
+      const toolsHtml = item.tools && item.tools.length ? `
+        <div class="integration-tools-wrap">
+          <span class="integration-tools-label">Available Agent Tools (${item.tools.length})</span>
+          <div class="integration-tools">
+            ${item.tools.map(t => `<span class="tool-tag ${t.is_write?'write':''}" title="${safe(t.description)}">${safe(t.name)}</span>`).join('')}
+          </div>
+        </div>
+      ` : (isCatalog ? '<p class="muted tiny">Native connector template ready for activation.</p>' : '<p class="muted tiny">No tools registered.</p>');
+
+      const buttonHtml = isConnected ? `
+        <button class="btn outline small" data-disconnect-integration="${safe(item.id)}" type="button">Disconnect</button>
+      ` : (isCatalog ? `
+        <button class="btn outline small" disabled style="opacity:0.4" type="button">Catalog</button>
+      ` : `
+        <button class="btn primary small" data-connect-integration="${safe(item.id)}" data-integration-name="${safe(item.name)}" data-auth-type="${safe(item.auth_type)}" type="button">Connect ↗</button>
+      `);
+
+      return `
+        <div class="integration-card" data-provider-card="${safe(item.id)}">
+          <div class="integration-card-head">
+            <div class="integration-brand">
+              <div class="integration-icon">${icon}</div>
+              <div class="integration-meta">
+                <h3 class="integration-name">${safe(item.name)}</h3>
+                <span class="integration-cat">${safe(item.category)} · ${safe(item.auth_type)}</span>
+              </div>
+            </div>
+            <span class="status-chip ${statusClass}">${statusLabel}</span>
+          </div>
+          <p class="integration-desc">${safe(item.description)}</p>
+          ${toolsHtml}
+          <div class="integration-card-actions">
+            <span class="permitted-count"><strong>${item.permitted_agents_count || 0}</strong> agents assigned</span>
+            ${buttonHtml}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch(err) {
+    grid.innerHTML = `<div class="error-msg">Failed to load integrations: ${safe(err.message)}</div>`;
+  }
+}
+
+// Integration connect/disconnect events
+document.addEventListener('click', async (e) => {
+  const connBtn = e.target.closest('[data-connect-integration]');
+  if(connBtn) {
+    const providerId = connBtn.dataset.connectIntegration;
+    const providerName = connBtn.dataset.integrationName;
+    const authType = connBtn.dataset.authType;
+    $('connect-provider-id').value = providerId;
+    $('connect-modal-title').textContent = `Connect ${providerName}`;
+    const fields = $('connect-fields');
+    if(authType === 'api_key') {
+      fields.innerHTML = `
+        <label>API Key / Personal Access Token
+          <input id="connect-api-key" type="password" required placeholder="Paste your API key" autocomplete="off" />
+        </label>
+        <label>Default Team Identifier (optional)
+          <input id="connect-team" placeholder="e.g. ENG" value="ENG" />
+        </label>
+      `;
+      $('connect-modal-hint').textContent = 'Your API token is encrypted with Fernet at rest and is never exposed to browser context.';
+    } else {
+      fields.innerHTML = `
+        <p class="muted small">Google Workspace uses OAuth 2.0 authorization. In demo mode or test runs, enter an access token or connect via Google OAuth.</p>
+        <label>Access Token (or test token)
+          <input id="connect-api-key" type="text" value="demo-oauth-token" required />
+        </label>
+      `;
+      $('connect-modal-hint').textContent = 'Live OAuth sessions store refresh tokens encrypted at rest.';
+    }
+    $('integration-connect-modal').hidden = false;
+    return;
+  }
+
+  const disBtn = e.target.closest('[data-disconnect-integration]');
+  if(disBtn) {
+    const providerId = disBtn.dataset.disconnectIntegration;
+    if(!confirm(`Disconnect ${providerId} and revoke stored credentials?`)) return;
+    try {
+      await api(`/api/v3/integrations/${providerId}/disconnect`, { method: 'POST' });
+      toast(`Disconnected ${providerId}`);
+      await renderIntegrations();
+    } catch(err) {
+      toast(err.message, true);
+    }
+    return;
+  }
+
+  if(e.target.id === 'connect-modal-close' || e.target.id === 'connect-modal-cancel' || e.target.id === 'integration-connect-modal') {
+    $('integration-connect-modal').hidden = true;
+    return;
+  }
+
+  if(e.target.id === 'integrations-refresh') {
+    renderIntegrations();
+    return;
+  }
+});
+
+const connectForm = $('integration-connect-form');
+if(connectForm) {
+  connectForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const providerId = $('connect-provider-id').value;
+    const key = $('connect-api-key').value.trim();
+    const teamEl = $('connect-team');
+    const team = teamEl ? teamEl.value.trim() : undefined;
+    try {
+      const payload = { api_key: key, access_token: key, default_team: team };
+      await api(`/api/v3/integrations/${providerId}/connect`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      $('integration-connect-modal').hidden = true;
+      toast(`Successfully connected ${providerId}!`);
+      await renderIntegrations();
+    } catch(err) {
+      toast(err.message, true);
+    }
+  });
+}
