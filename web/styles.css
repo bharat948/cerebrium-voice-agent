@@ -71,7 +71,6 @@
 @keyframes blink-pulse { 0%,100%{opacity:.15; transform:scaleY(.7)} 50%{opacity:1; transform:scaleY(1)} }
 .voice-system-notice { margin:6px auto; background:#131a24; border:1px solid #293647; color:#9db2cb; font-size:11px; padding:6px 14px; border-radius:8px; text-align:center; max-width:85%; }
 @media(max-width:860px){ .voice-lab-layout{grid-template-columns:1fr} .voice-chat-feed{height:400px} }
-
 /* Integrations Hub Styles */
 .integrations-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); gap:16px; margin-top:16px; }
 .integration-card { background:#11151f; border:1px solid #1f2736; border-radius:14px; padding:20px; display:flex; flex-direction:column; justify-content:space-between; gap:14px; transition:border-color .15s ease, transform .15s ease; }
