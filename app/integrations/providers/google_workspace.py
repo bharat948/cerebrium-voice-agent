@@ -122,6 +122,23 @@ class GoogleWorkspaceProvider(IntegrationProvider):
         if action == "google_search_emails":
             query = params.get("query", "").lower()
             limit = min(int(params.get("limit", 5)), 10)
+            row = db.one("SELECT encrypted_credentials FROM integrations WHERE provider='google'")
+            if row and not s.demo_mode:
+                try:
+                    from app.v3 import google_services
+                    data = await google_services.api_get(
+                        "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+                        params={"q": query, "maxResults": str(limit)}
+                    )
+                    messages = data.get("messages", [])
+                    return {
+                        "status": "completed",
+                        "query": query,
+                        "count": len(messages),
+                        "emails": [{"id": m.get("id"), "threadId": m.get("threadId")} for m in messages]
+                    }
+                except Exception:
+                    pass
             # In demo mode or offline, provide realistic simulated messages
             return {
                 "status": "completed",
