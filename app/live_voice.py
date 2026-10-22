@@ -22,6 +22,7 @@ import websockets
 from fastapi import WebSocket, WebSocketDisconnect
 from app import db
 from app.config import get_settings
+from app.live_diagnostics import LiveSessionDiagnostics, wait_for_live_start
 from app.prompts import call_system_prompt
 from app.v3 import registry, memory, intelligent_memory, voice_behavior, live_functions
 
@@ -72,7 +73,7 @@ def session_start(agent: dict, plan: dict | None, model: str, voice: str, backen
             }],
             'audio': {'format': {'type': 'audio/pcmu', 'rate': 8000},
                       'output': {'voice': voice}},
-            # Managed backend reasoning. No business tools or external actions are advertised.
+            # Managed reasoning with only the allowlisted tools above.
             'delegation': {
                 'type': 'responses',
                 'responses': {
@@ -129,6 +130,13 @@ class LiveVoiceSession:
         self.runtime_poll_at = 0.
         self.runtime_control = {}
         self.tool_calls_count = 0
+        self.diagnostics = LiveSessionDiagnostics(
+            self.live_send, backend_model=self.s.openai_live_backend_model,
+            api_key=self.s.openai_api_key,
+            fallback_model=self.s.openai_live_fallback_backend_model,
+            record=lambda kind, detail: db.add_event(self.call['id'], kind, detail),
+            label='call=' + self.call['id'],
+        )
 
     async def live_send(self,payload:dict):
         async with self.send_live_lock:
@@ -141,7 +149,9 @@ class LiveVoiceSession:
         # Security revocations take effect immediately, even if a call pins a release.
         configuration['tools']=list(set(configuration.get('tools',[])) & set(current.get('tools',[])))
         for item in calls:
-            if self.tool_calls_count>=15:
+            if self.diagnostics.backend_unavailable:
+                result={'status':'unavailable','reason':'Reasoning backend configuration is not validated'}
+            elif self.tool_calls_count>=15:
                 result={'status':'denied','reason':'Per-call tool limit reached'}
             else:
                 self.tool_calls_count+=1
@@ -290,6 +300,7 @@ class LiveVoiceSession:
         try:
             async for raw in self.live:
                 event = json.loads(raw)
+                await self.diagnostics.observe(event)
                 await self.refresh_runtime_controls()
                 function=live_functions.completed_function_call(event)
                 if function:
@@ -330,12 +341,7 @@ class LiveVoiceSession:
                     usage = event.get('usage') or {}
                     db.add_event(self.call['id'], 'usage', json.dumps(usage)[:2000])
                     break
-                elif kind == 'error':
-                    err = event.get('error') or {}
-                    code = err.get('code', 'unknown') if isinstance(err, dict) else 'unknown'
-                    log.warning('GPT-Live runtime error call=%s code=%s', self.call['id'], code)
-                    db.add_event(self.call['id'], 'error', 'GPT-Live event: ' + str(code)[:100])
-                    # Live may continue after a rejected command. Fatal errors close the socket.
+                # Nonfatal error events are recorded and handled by diagnostics.
         except asyncio.CancelledError:
             raise
         finally:
@@ -359,16 +365,10 @@ class LiveVoiceSession:
                 self.live = live
                 await self.live_send(start)
                 # LIVE protocol requires session.started before we send the first audio frame.
-                while True:
-                    received = json.loads(await asyncio.wait_for(live.recv(), timeout=15))
-                    if received.get('type') == 'session.started':
-                        self.live_ready_at = time.monotonic()
-                        db.add_event(self.call['id'], 'state', 'GPT-Live session started: ' +
-                                     str((received.get('session') or {}).get('id',''))[:90])
-                        break
-                    if received.get('type') == 'error':
-                        raise RuntimeError('GPT-Live rejected session.start: ' +
-                                           str((received.get('error') or {}).get('code', 'unknown')))
+                received = await wait_for_live_start(live, self.diagnostics)
+                self.live_ready_at = time.monotonic()
+                db.add_event(self.call['id'], 'state', 'GPT-Live session started: ' +
+                             str((received.get('session') or {}).get('id',''))[:90])
                 input_task = asyncio.create_task(self.forward_twilio_audio(start_message))
                 output_task = asyncio.create_task(self.forward_live_events())
                 self.audio_task = asyncio.create_task(self.send_audio_loop())

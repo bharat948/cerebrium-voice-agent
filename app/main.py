@@ -28,6 +28,7 @@ from app.prompts import call_system_prompt
 from app.security import require_api_key, require_twilio_http, allow_twilio_websocket
 from app.voice import VoiceSession
 from app.live_voice import LiveVoiceSession
+from app.live_diagnostics import LiveProviderError
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger('voice-foundry')
@@ -53,7 +54,7 @@ async def lifespan(app: FastAPI):
             await asyncio.gather(task, return_exceptions=True)
 
 
-app = FastAPI(title='Voice Foundry API', version='4.0.0-alpha1', lifespan=lifespan)
+app = FastAPI(title='Voice Foundry API', version='4.0.0-alpha2', lifespan=lifespan)
 app.add_middleware(SessionMiddleware, secret_key=get_settings().session_secret or get_settings().app_api_key,
                    same_site='lax', https_only=get_settings().auth_mode=='google', max_age=3600*12)
 app.include_router(v3_router)
@@ -105,7 +106,7 @@ async def homepage():
 
 @app.get('/health')
 async def health():
-    return {'status': 'ok', 'version': '4.0.0-alpha1'}
+    return {'status': 'ok', 'version': '4.0.0-alpha2'}
 
 
 @app.get('/api/config', dependencies=[Depends(api_auth)])
@@ -429,9 +430,10 @@ async def twilio_media(ws: WebSocket):
             await asyncio.to_thread(lambda: client().calls(sid).update(status='completed'))
         except Exception as exc:
             log.exception('Audio runtime failed call_id=%s', call_id)
-            db.add_event(call_id, 'error', f'Voice runtime error: {type(exc).__name__}')
+            detail = str(exc) if isinstance(exc, LiveProviderError) else type(exc).__name__
+            db.add_event(call_id, 'error', f'Voice runtime error: {detail}')
             db.execute('UPDATE calls SET status=?,error=? WHERE id=?',
-                       ('failed', type(exc).__name__, call_id))
+                       ('failed', detail, call_id))
         finally:
             current = db.one('SELECT status FROM calls WHERE id=?', (call_id,))
             if current and current['status'] not in ('completed','failed','busy','no-answer','canceled'):

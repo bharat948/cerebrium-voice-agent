@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     openai_live_model: str = 'gpt-live-1'
     openai_live_voice: str = 'marin'
     openai_live_backend_model: str = 'gpt-4o-mini'
+    # Optional explicit fallback for recoverable Responses configuration errors.
+    # Empty preserves model selection; never switch models without configuration.
+    openai_live_fallback_backend_model: str = ''
     live_barge_in_rms: int = 900
     live_barge_in_frames: int = 5
     openai_max_output_tokens: int = 220
