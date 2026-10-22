@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     auth_mode: str = 'api_key'  # google or api_key; production should use google
     google_client_id: str = ''
     google_client_secret: str = ''
+    google_connector_client_id: str = ''
+    google_connector_client_secret: str = ''
+    google_connector_redirect_uri: str = ''
     google_owner_sub: str = ''
     session_secret: str = ''
     smtp_host: str = ''
@@ -61,6 +64,14 @@ class Settings(BaseSettings):
     @property
     def outbound_allowlist(self) -> set[str]:
         return {n.strip() for n in self.allowed_outbound_numbers.split(',') if n.strip()}
+
+    @property
+    def effective_google_client_id(self) -> str:
+        return self.google_client_id or self.google_connector_client_id
+
+    @property
+    def effective_google_client_secret(self) -> str:
+        return self.google_client_secret or self.google_connector_client_secret
 
     @property
     def base_url(self) -> str:

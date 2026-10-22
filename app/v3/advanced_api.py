@@ -1,5 +1,6 @@
 """Authenticated v3 owner API for knowledge, governance, integrations and outcomes."""
 import json
+import httpx
 from fastapi import APIRouter,Depends,UploadFile,File,Form,HTTPException,Request
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel,Field
@@ -181,42 +182,130 @@ async def google_calendar(start:str,end:str):
     try:return await google_services.calendar_events(start,end)
     except google_services.GoogleIntegrationError as e:raise HTTPException(503,str(e)) from None
 
-# Explicit provider-connection flow. This path is owner-session authenticated,
-# and the callback uses a fresh signed OAuth state verified by Authlib.
+# Explicit provider-connection flow. Authenticated via API key or Google owner session.
+# The callback uses a fresh signed OAuth state verified by Authlib.
 google_router=APIRouter(tags=['Google owner integrations'])
+
+
+def _get_google_redirect_uri() -> str:
+    s = get_settings()
+    if s.google_connector_redirect_uri:
+        return s.google_connector_redirect_uri.strip()
+    return f"{s.base_url}/auth/google/connect/callback"
+
+
 @google_router.get('/auth/google/connect')
 async def connect_google(request:Request,_=Depends(require_api_key)):
     s=get_settings()
-    if s.auth_mode!='google':raise HTTPException(403,'Connect requires Google owner session')
+    client_id = s.effective_google_client_id
+    client_secret = s.effective_google_client_secret
+    if not client_id or not client_secret:
+        raise HTTPException(400, 'Google OAuth credentials missing: configure GOOGLE_CONNECTOR_CLIENT_ID and GOOGLE_CONNECTOR_CLIENT_SECRET (or GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)')
     google_services._cipher()
-    from authlib.integrations.starlette_client import OAuth
-    oauth=OAuth()
-    oauth.register(name='vf_google_services',client_id=s.google_client_id,
-        client_secret=s.google_client_secret,
-        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-        client_kwargs={'scope':google_services.SCOPES,'access_type':'offline','prompt':'consent'})
-    request.session['google_connect_state']='requested'
-    return await oauth.vf_google_services.authorize_redirect(request,s.base_url+'/auth/google/connect/callback',
-                                                             access_type='offline',prompt='consent')
+    redirect_uri = _get_google_redirect_uri()
+    try:
+        from authlib.integrations.starlette_client import OAuth
+        oauth=OAuth()
+        oauth.register(name='vf_google_services',client_id=client_id,
+            client_secret=client_secret,
+            server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+            client_kwargs={'scope':google_services.SCOPES,'access_type':'offline','prompt':'consent'})
+        request.session['google_connect_state']='requested'
+        return await oauth.vf_google_services.authorize_redirect(request, redirect_uri,
+                                                                 access_type='offline',prompt='consent')
+    except ImportError:
+        import urllib.parse
+        import secrets
+        state = secrets.token_urlsafe(32)
+        request.session['google_connect_state'] = state
+        params = {
+            'client_id': client_id,
+            'redirect_uri': redirect_uri,
+            'response_type': 'code',
+            'scope': google_services.SCOPES,
+            'access_type': 'offline',
+            'prompt': 'consent',
+            'state': state,
+        }
+        auth_url = 'https://accounts.google.com/o/oauth2/v2/auth?' + urllib.parse.urlencode(params)
+        return RedirectResponse(auth_url, status_code=302)
+
+
+async def _handle_google_connect_callback(request: Request):
+    s = get_settings()
+    if s.auth_mode == 'google' and s.google_owner_sub:
+        if request.session.get('owner_sub') != s.google_owner_sub:
+            raise HTTPException(403, 'Owner authentication required')
+    expected_state = request.session.get('google_connect_state')
+    if not expected_state:
+        raise HTTPException(403, 'Google connect flow not initiated')
+    client_id = s.effective_google_client_id
+    client_secret = s.effective_google_client_secret
+    if not client_id or not client_secret:
+        raise HTTPException(400, 'Google OAuth credentials missing')
+
+    token = None
+    try:
+        from authlib.integrations.starlette_client import OAuth
+        oauth = OAuth()
+        oauth.register(name='vf_google_services',client_id=client_id,
+            client_secret=client_secret,
+            server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
+            client_kwargs={'scope':google_services.SCOPES})
+        token = await oauth.vf_google_services.authorize_access_token(request)
+    except (ImportError, Exception):
+        error = request.query_params.get('error')
+        if error:
+            raise HTTPException(400, f"Google OAuth error: {error}")
+        code = request.query_params.get('code')
+        if not code:
+            raise HTTPException(400, 'Authorization code missing from Google callback')
+        req_state = request.query_params.get('state')
+        if expected_state != 'requested' and req_state and req_state != expected_state:
+            raise HTTPException(403, 'Invalid OAuth state')
+
+        redirect_uri = _get_google_redirect_uri()
+        async with httpx.AsyncClient(timeout=20) as client:
+            token_resp = await client.post('https://oauth2.googleapis.com/token', data={
+                'code': code,
+                'client_id': client_id,
+                'client_secret': client_secret,
+                'redirect_uri': redirect_uri,
+                'grant_type': 'authorization_code',
+            })
+            if token_resp.status_code != 200:
+                raise HTTPException(400, f"Google token exchange failed: {token_resp.text}")
+            token = token_resp.json()
+            try:
+                userinfo_resp = await client.get('https://www.googleapis.com/oauth2/v2/userinfo', headers={
+                    'Authorization': f"Bearer {token.get('access_token')}"
+                })
+                if userinfo_resp.status_code == 200:
+                    token['userinfo'] = userinfo_resp.json()
+            except Exception:
+                pass
+
+    if not token:
+        raise HTTPException(400, 'Failed to obtain Google OAuth access token')
+
+    user = token.get('userinfo') or {}
+    if s.auth_mode == 'google' and s.google_owner_sub and user.get('sub') != s.google_owner_sub:
+        raise HTTPException(403, 'Google account mismatch')
+    google_services.put_token(token)
+    request.session.pop('google_connect_state', None)
+    return RedirectResponse('/#integrations', status_code=303)
+
 
 @google_router.get('/auth/google/connect/callback')
 async def connected_google(request:Request):
-    if request.session.get('owner_sub')!=get_settings().google_owner_sub or \
-            request.session.get('google_connect_state')!='requested':
-        raise HTTPException(403,'Owner authentication required')
-    from authlib.integrations.starlette_client import OAuth
-    s=get_settings();oauth=OAuth()
-    oauth.register(name='vf_google_services',client_id=s.google_client_id,
-        client_secret=s.google_client_secret,
-        server_metadata_url='https://accounts.google.com/.well-known/openid-configuration',
-        client_kwargs={'scope':google_services.SCOPES})
-    token=await oauth.vf_google_services.authorize_access_token(request)
-    user=token.get('userinfo') or {}
-    if user.get('sub')!=s.google_owner_sub:
-        raise HTTPException(403,'Google account mismatch')
-    google_services.put_token(token)
-    request.session.pop('google_connect_state',None)
-    return RedirectResponse('/',status_code=303)
+    return await _handle_google_connect_callback(request)
+
+
+@google_router.get('/connectors/google/callback')
+@google_router.get('/connectors/google_calendar/callback')
+@google_router.get('/connectors/gmail/callback')
+async def connected_google_aliases(request:Request):
+    return await _handle_google_connect_callback(request)
 
 @router.get('/schedules')
 def list_schedules():

@@ -11,7 +11,8 @@ def require_api_key(request: Request, x_api_key: str | None = Header(default=Non
             return
         raise HTTPException(status_code=401, detail='Owner Google login required')
     expected = s.app_api_key
-    if not expected or not secrets.compare_digest(x_api_key or '', expected):
+    provided = x_api_key or request.query_params.get('api_key') or request.session.get('api_key')
+    if not expected or not secrets.compare_digest(provided or '', expected):
         raise HTTPException(status_code=401, detail='Invalid API key')
 
 

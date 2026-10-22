@@ -9,17 +9,26 @@ from app import db
 from app.config import get_settings
 from app.v3 import contacts
 
-SCOPES='openid email profile https://www.googleapis.com/auth/contacts.readonly https://www.googleapis.com/auth/calendar.events https://www.googleapis.com/auth/calendar.readonly'
+SCOPES = (
+    'openid email profile '
+    'https://www.googleapis.com/auth/contacts.readonly '
+    'https://www.googleapis.com/auth/calendar '
+    'https://www.googleapis.com/auth/calendar.events '
+    'https://www.googleapis.com/auth/gmail.readonly '
+    'https://www.googleapis.com/auth/gmail.compose '
+    'https://www.googleapis.com/auth/gmail.send '
+    'https://www.googleapis.com/auth/tasks'
+)
 
 class GoogleIntegrationError(ValueError): pass
 
 
 def _cipher():
-    from cryptography.fernet import Fernet
-    key=get_settings().integration_encryption_key
-    if not key: raise GoogleIntegrationError('Configure INTEGRATION_ENCRYPTION_KEY before connecting Google')
-    try:return Fernet(key.encode())
-    except (ValueError,TypeError):raise GoogleIntegrationError('Integration encryption key must be a valid Fernet key') from None
+    from app.integrations import manager
+    try:
+        return manager._cipher()
+    except Exception as exc:
+        raise GoogleIntegrationError(str(exc)) from exc
 
 
 def put_token(token):
@@ -48,9 +57,13 @@ async def access_token():
     refresh=data.get('refresh_token')
     if not refresh:raise GoogleIntegrationError('Google refresh token unavailable: reconnect')
     s=get_settings()
+    client_id = s.effective_google_client_id
+    client_secret = s.effective_google_client_secret
+    if not client_id or not client_secret:
+        raise GoogleIntegrationError('Google OAuth credentials not configured: set GOOGLE_CONNECTOR_CLIENT_ID or GOOGLE_CLIENT_ID')
     async with httpx.AsyncClient(timeout=12) as client:
         result=await client.post('https://oauth2.googleapis.com/token',data={
-            'client_id':s.google_client_id,'client_secret':s.google_client_secret,
+            'client_id':client_id,'client_secret':client_secret,
             'refresh_token':refresh,'grant_type':'refresh_token'})
         if result.status_code!=200:raise GoogleIntegrationError('Google authorization expired: reconnect')
     token=result.json();token['expires_at']=time.time()+int(token.get('expires_in',3600))
@@ -60,10 +73,32 @@ async def access_token():
 
 
 async def api_get(url,params=None):
-    if not url.startswith('https://people.googleapis.com/v1/') and not url.startswith('https://www.googleapis.com/calendar/v3/'):
+    allowed_prefixes = (
+        'https://people.googleapis.com/v1/',
+        'https://www.googleapis.com/calendar/v3/',
+        'https://gmail.googleapis.com/gmail/v1/',
+        'https://tasks.googleapis.com/tasks/v1/',
+        'https://www.googleapis.com/tasks/v1/'
+    )
+    if not any(url.startswith(p) for p in allowed_prefixes):
         raise GoogleIntegrationError('Unsupported Google API URL')
     async with httpx.AsyncClient(timeout=15) as client:
         result=await client.get(url,params=params,headers={'Authorization':'Bearer '+await access_token()})
+        if result.status_code>=400:raise GoogleIntegrationError(f'Google API returned {result.status_code}')
+    return result.json()
+
+
+async def api_post(url,json_data=None):
+    allowed_prefixes = (
+        'https://www.googleapis.com/calendar/v3/',
+        'https://gmail.googleapis.com/gmail/v1/',
+        'https://tasks.googleapis.com/tasks/v1/',
+        'https://www.googleapis.com/tasks/v1/'
+    )
+    if not any(url.startswith(p) for p in allowed_prefixes):
+        raise GoogleIntegrationError('Unsupported Google API URL')
+    async with httpx.AsyncClient(timeout=20) as client:
+        result=await client.post(url,json=json_data,headers={'Authorization':'Bearer '+await access_token()})
         if result.status_code>=400:raise GoogleIntegrationError(f'Google API returned {result.status_code}')
     return result.json()
 
