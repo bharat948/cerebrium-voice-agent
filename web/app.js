@@ -63,6 +63,10 @@ function render(){
  $('recent-calls').innerHTML=state.calls.length?state.calls.slice(0,5).map(callRow).join(''):'<div class="empty-message">No calls yet. Open the call studio to prepare your first mission.</div>';
  $('history-items').innerHTML=state.calls.length?state.calls.map(callRow).join(''):'<div class="empty-message">Your call history will appear here.</div>';
  $('mission-agent').innerHTML=state.agents.map(a=>`<option value="${safe(a.id)}">${safe(a.name)}</option>`).join('');
+ if($('voice-agent')&&!$('voice-agent').children.length){
+   $('voice-agent').innerHTML=state.agents.map(a=>`<option value="${safe(a.id)}">${safe(a.name)} · ${safe(a.role)}</option>`).join('');
+   renderSelectedVoiceAgent();
+ }
  $('agent-select').innerHTML=state.agents.map(a=>`<option value="${safe(a.id)}">${safe(a.name)} · ${safe(a.role)}</option>`).join('');
  $('contact-count').textContent=`${state.contacts.length} CONTACTS`;
  $('contact-list').innerHTML=state.contacts.length ? state.contacts.map(c=>`<div class="agent-card"><span class="row-symbol">♧</span><div><h3>${safe(c.name)}</h3><p>${safe(c.phone)} · ${safe(c.language)}</p><small>${c.outbound_consent?'Outbound consent recorded':'Outbound not authorized'} · ${c.email_consent?'Email consent recorded':'No email consent'} · ${c.memory_opt_in?'Memory enabled':'Memory disabled'}</small><p><button class="btn outline" data-contact-consent="${safe(c.id)}">Consent settings</button> <button class="btn outline" data-contact-memory="${safe(c.id)}">Memories</button> <button class="btn outline" data-memory-policy="${safe(c.id)}">${c.memory_opt_in?'Disable memory':'Enable memory'}</button> <button class="btn outline" data-contact-deactivate="${safe(c.id)}">Deactivate</button></p></div></div>`).join('') : '<div class="empty-message">Add your first contact.</div>';
@@ -165,6 +169,13 @@ $('import-csv-btn').addEventListener('click',async()=>{
 });
 let studioAgentId=null,studioDraftId=null;
 document.addEventListener('click',async(e)=>{
+ const openStudio=e.target.closest('[data-open-studio-agent]');
+ if(openStudio){
+   const agentId=openStudio.dataset.openStudioAgent;
+   navigate('agents');
+   setTimeout(()=>{const btn=document.querySelector(`[data-edit-agent="${CSS.escape(agentId)}"]`);if(btn)btn.click();},60);
+   return;
+ }
  const btn=e.target.closest('[data-edit-agent]');if(!btn)return;
  studioAgentId=btn.dataset.editAgent;studioDraftId=null;$('studio-publish').disabled=true;
  try{
@@ -392,7 +403,12 @@ async function loadAdvanced(){
     $('calendar-list').innerHTML=calendar.length?calendar.map(e=>`<article class="advanced-row"><strong>${safe(e.title)}</strong><small>${safe(prettyTime(e.starts_at))} · ${safe(e.state)}</small></article>`).join(''):'<p class="muted">No local appointments.</p>';
     $('google-integration-status').textContent=google.connected?'Google services connected.':'Google services not connected.';
     const sel=state.agents.map(a=>`<option value="${safe(a.id)}">${safe(a.name)} · ${safe(a.role)}</option>`).join('');
+    const prevVoiceAgent=$('voice-agent')?.value;
     $('voice-agent').innerHTML=sel;$('knowledge-agent').innerHTML=sel;
+    if(prevVoiceAgent && state.agents.some(a=>a.id===prevVoiceAgent)){
+      $('voice-agent').value=prevVoiceAgent;
+    }
+    renderSelectedVoiceAgent();
     $('ops-call').innerHTML='<option value="">Choose active call</option>'+state.calls.filter(c=>['queued','initiated','ringing','in-progress'].includes(c.status)).map(c=>`<option value="${safe(c.id)}">${safe(c.phone)} · ${safe(c.status)}</option>`).join('');
   }catch(error){toast('Operations refresh: '+error.message,true);}
 }
@@ -449,17 +465,90 @@ function playPCMU(encoded){if(!previewAudio)return;
   const src=previewAudio.createBufferSource();src.buffer=buffer;src.connect(previewAudio.destination);
   nextPlay=Math.max(previewAudio.currentTime+0.04,nextPlay);src.start(nextPlay);nextPlay+=buffer.duration;
 }
-async function stopVoice(){try{previewSocket?.send(JSON.stringify({type:'stop'}));previewSocket?.close();}catch{}
+function renderSelectedVoiceAgent(){
+  const card=$('voice-agent-card');
+  if(!card)return;
+  const currentId=$('voice-agent')?.value;
+  const agent=state.agents.find(a=>a.id===currentId)||state.agents[0];
+  if(!agent){
+    card.innerHTML='<div class="muted small">No configured agent found. Add one in Agent Studio.</div>';
+    return;
+  }
+  const initial=safe((agent.name||'A').slice(0,1).toUpperCase());
+  const instr=safe(agent.instructions||'');
+  card.innerHTML=`
+    <div class="agent-card-header">
+      <div class="agent-card-avatar">${initial}</div>
+      <div class="agent-card-title">
+        <h4>${safe(agent.name)}</h4>
+        <span class="agent-role-pill">${safe(agent.role||'Voice Agent')}</span>
+      </div>
+    </div>
+    <div class="agent-card-badges">
+      <span class="agent-meta-chip"><span>🌐</span> Language: <strong>${safe(agent.language||'English')}</strong></span>
+      <span class="agent-meta-chip"><span>⚡</span> Engine: <strong>GPT-Live (8 kHz PCMU)</strong></span>
+      <span class="agent-meta-chip"><span>🛡️</span> Sandbox: <strong>Zero call charges</strong></span>
+    </div>
+    <div class="agent-instructions-preview">
+      <span class="preview-label">Core Persona &amp; Instructions</span>
+      <p title="${instr}">${instr||'No working instructions provided.'}</p>
+    </div>
+    <div class="agent-card-footer">
+      <button class="agent-studio-link" type="button" data-open-studio-agent="${safe(agent.id)}">Customize in Agent Studio ↗</button>
+    </div>`;
+}
+
+let voiceTranscriptState={
+  currentSpeaker:null,
+  currentBubbleTextEl:null,
+  currentPulseEl:null,
+  lastDeltaTime:0,
+  turnCount:0
+};
+
+function resetVoiceTranscriptState(){
+  if(voiceTranscriptState.currentPulseEl){
+    voiceTranscriptState.currentPulseEl.remove();
+    voiceTranscriptState.currentPulseEl=null;
+  }
+  voiceTranscriptState.currentSpeaker=null;
+  voiceTranscriptState.currentBubbleTextEl=null;
+  voiceTranscriptState.lastDeltaTime=0;
+}
+
+function clearVoiceTranscript(){
+  resetVoiceTranscriptState();
+  voiceTranscriptState.turnCount=0;
+  const turnCountEl=$('voice-turn-count');
+  if(turnCountEl) turnCountEl.textContent='0 TURNS';
+  const feed=$('voice-captions');
+  if(feed){
+    feed.innerHTML=`
+      <div class="empty-transcript" id="voice-empty-state">
+        <div class="tiny-orb">🎙️</div>
+        <h3>No preview in progress</h3>
+        <p class="muted small">Select an agent and click &ldquo;Start talking&rdquo;. Real-time audio stream from you and the agent will render here conversationally.</p>
+      </div>`;
+  }
+}
+
+async function stopVoice(){
+  try{previewSocket?.send(JSON.stringify({type:'stop'}));previewSocket?.close();}catch{}
   previewProcessor?.disconnect();previewStream?.getTracks().forEach(t=>t.stop());await previewAudio?.close();
   previewSocket=previewProcessor=previewStream=previewAudio=null;
-  $('voice-start').disabled=false;$('voice-stop').disabled=true;$('voice-status').textContent='DISCONNECTED';}
+  $('voice-start').disabled=false;$('voice-stop').disabled=true;$('voice-status').textContent='DISCONNECTED';
+  if($('voice-agent')) $('voice-agent').disabled=false;
+  resetVoiceTranscriptState();
+}
 $('voice-start').addEventListener('click',async()=>{
   $('voice-start').disabled=true;
+  if($('voice-agent')) $('voice-agent').disabled=true;
   try{
     const {token}=await api('/api/v3/voice/preview-token',{method:'POST',body:JSON.stringify({agent_id:$('voice-agent').value})});
     const url=`${location.protocol==='https:'?'wss:':'ws:'}//${location.host}/api/v3/voice/preview?token=${encodeURIComponent(token)}`;
     previewSocket=new WebSocket(url);$('voice-status').textContent='CONNECTING';
-    previewSocket.onmessage=async e=>{const msg=JSON.parse(e.data);
+    previewSocket.onmessage=async e=>{
+      const msg=JSON.parse(e.data);
       if(msg.type==='ready'){
         try{
           previewAudio=new AudioContext();await previewAudio.resume();previewStream=await navigator.mediaDevices.getUserMedia({audio:true});
@@ -468,24 +557,110 @@ $('voice-start').addEventListener('click',async()=>{
           let buffer=[],readPos=0;
           processor.onaudioprocess=e=>{
             const input=e.inputBuffer.getChannelData(0),step=previewAudio.sampleRate/8000;
-            while(readPos<input.length){const idx=Math.floor(readPos);buffer.push(pcmULaw(input[idx]||0));readPos+=step;
-              if(buffer.length>=320){if(previewSocket?.readyState===1){const bytes=String.fromCharCode(...buffer.splice(0,320));previewSocket.send(JSON.stringify({type:'audio',audio:btoa(bytes)}));}else buffer=[];}
-            }readPos-=input.length;
+            while(readPos<input.length){
+              const idx=Math.floor(readPos);buffer.push(pcmULaw(input[idx]||0));readPos+=step;
+              if(buffer.length>=320){
+                if(previewSocket?.readyState===1){
+                  const bytes=String.fromCharCode(...buffer.splice(0,320));
+                  previewSocket.send(JSON.stringify({type:'audio',audio:btoa(bytes)}));
+                }else buffer=[];
+              }
+            }
+            readPos-=input.length;
           };
           source.connect(processor);processor.connect(muted);muted.connect(previewAudio.destination);
           $('voice-status').textContent='LIVE';$('voice-stop').disabled=false;
         }catch(err){toast('Microphone: '+err.message,true);await stopVoice();}
-      }else if(msg.type==='audio')playPCMU(msg.audio);
-      else if(msg.type==='caption'){
-        const line=document.createElement('p');line.textContent=`${msg.speaker}: ${msg.delta}`;$('voice-captions').append(line);
-        $('voice-captions').scrollTop=$('voice-captions').scrollHeight;
-      }else if(msg.type==='error')toast(msg.detail,true);
-      else if(msg.type==='info'){$('voice-captions').textContent=msg.detail;$('voice-stop').disabled=false;}
+      }else if(msg.type==='audio'){
+        playPCMU(msg.audio);
+      }else if(msg.type==='caption'){
+        const delta=msg.delta;
+        if(!delta) return;
+        const speaker=msg.speaker;
+        const now=Date.now();
+        const feed=$('voice-captions');
+        
+        const empty=$('voice-empty-state');
+        if(empty) empty.remove();
+        
+        const shouldCreateNew=!voiceTranscriptState.currentBubbleTextEl ||
+          voiceTranscriptState.currentSpeaker!==speaker ||
+          (now-voiceTranscriptState.lastDeltaTime)>2500;
+          
+        if(shouldCreateNew){
+          if(voiceTranscriptState.currentPulseEl){
+            voiceTranscriptState.currentPulseEl.remove();
+            voiceTranscriptState.currentPulseEl=null;
+          }
+          
+          voiceTranscriptState.turnCount++;
+          const turnCountEl=$('voice-turn-count');
+          if(turnCountEl) turnCountEl.textContent=`${voiceTranscriptState.turnCount} TURN${voiceTranscriptState.turnCount===1?'':'S'}`;
+          
+          const currentAgentId=$('voice-agent')?.value;
+          const currentAgent=state.agents.find(a=>a.id===currentAgentId);
+          const agentName=currentAgent?.name||'Agent';
+          const displayName=speaker==='assistant'?agentName:'You';
+          const avatarLetter=speaker==='assistant'?safe(agentName.slice(0,1).toUpperCase()):'YOU';
+          const timeStr=new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'});
+          
+          const turnDiv=document.createElement('div');
+          turnDiv.className=`voice-chat-turn ${speaker}`;
+          turnDiv.innerHTML=`
+            <div class="voice-chat-meta">
+              <span class="voice-chat-avatar">${avatarLetter}</span>
+              <strong class="voice-chat-name">${safe(displayName)}</strong>
+              <span class="voice-chat-time">${timeStr}</span>
+            </div>
+            <div class="voice-chat-bubble">
+              <span class="voice-chat-text"></span><span class="streaming-pulse" aria-hidden="true"></span>
+            </div>`;
+          
+          feed.append(turnDiv);
+          voiceTranscriptState.currentSpeaker=speaker;
+          voiceTranscriptState.currentBubbleTextEl=turnDiv.querySelector('.voice-chat-text');
+          voiceTranscriptState.currentPulseEl=turnDiv.querySelector('.streaming-pulse');
+        }
+        
+        const textEl=voiceTranscriptState.currentBubbleTextEl;
+        const currentText=textEl.textContent;
+        const needsSpace=currentText.length>0 &&
+          !/\s$/.test(currentText) &&
+          !/^\s/.test(delta) &&
+          !/^[.,!?;:'")\]]/.test(delta);
+          
+        textEl.textContent+=(needsSpace?' ':'')+delta;
+        voiceTranscriptState.lastDeltaTime=now;
+        feed.scrollTop=feed.scrollHeight;
+      }else if(msg.type==='error'){
+        toast(msg.detail,true);
+      }else if(msg.type==='info'){
+        const feed=$('voice-captions');
+        const empty=$('voice-empty-state');
+        if(empty) empty.remove();
+        const notice=document.createElement('div');
+        notice.className='voice-system-notice';
+        notice.textContent=msg.detail;
+        feed.append(notice);
+        feed.scrollTop=feed.scrollHeight;
+        $('voice-stop').disabled=false;
+      }
     };
     previewSocket.onerror=()=>toast('WebSocket voice preview failed',true);
-    previewSocket.onclose=()=>{if(previewSocket)$('voice-status').textContent='ENDED';$('voice-start').disabled=false;};
-  }catch(err){toast(err.message,true);await stopVoice();}
+    previewSocket.onclose=()=>{
+      if(previewSocket)$('voice-status').textContent='ENDED';
+      $('voice-start').disabled=false;
+      if($('voice-agent')) $('voice-agent').disabled=false;
+      resetVoiceTranscriptState();
+    };
+  }catch(err){
+    toast(err.message,true);
+    if($('voice-agent')) $('voice-agent').disabled=false;
+    await stopVoice();
+  }
 });
 $('voice-stop').addEventListener('click',stopVoice);
+$('voice-agent')?.addEventListener('change',renderSelectedVoiceAgent);
+$('voice-clear-btn')?.addEventListener('click',clearVoiceTranscript);
 
 $('contact-select').addEventListener('change',()=>{const contact=state.contacts.find(c=>c.id===$('contact-select').value);if(contact)$('phone-input').value=contact.phone;});
