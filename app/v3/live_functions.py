@@ -36,10 +36,10 @@ def definitions(config,recognized_contact=False):
         tools.add('calendar_check')
         if recognized_contact:tools.add('appointment_proposal')
     return [
-      {'type':'function','name':name,'description':DEFINITIONS[name][0],
-       'parameters':{'type':'object','properties':schema,'required':list(schema),'additionalProperties':False},
+      {'type':'function','name':name,'description':desc,
+       'parameters':{'type':'object','properties':props,'required':list(props),'additionalProperties':False},
        'strict':True}
-      for name,schema in DEFINITIONS.items() if name in tools
+      for name,(desc,props) in DEFINITIONS.items() if name in tools
     ]
 
 
