@@ -9,7 +9,8 @@ from app import db
 from app.config import get_settings
 
 RISKS={'research':'read','notify':'low','create_task':'low', 'book_appointment':'medium',
-       'send_email':'high','initiate_call':'high','permissions':'restricted'}
+       'send_email':'high','initiate_call':'high','permissions':'restricted',
+       'linear_create_issue':'medium','google_draft_email':'medium','google_calendar_create':'medium'}
 TERMINAL={'approved','rejected','expired'}
 
 class PolicyViolation(ValueError): pass

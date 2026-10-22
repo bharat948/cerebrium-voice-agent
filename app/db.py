@@ -36,7 +36,14 @@ def engine():
         if _engine is not None:
             _engine.dispose()
         if url.startswith('sqlite:///') and ':memory:' not in url:
-            Path(url.removeprefix('sqlite:///')).parent.mkdir(parents=True, exist_ok=True)
+            db_path = Path(url.removeprefix('sqlite:///'))
+            try:
+                db_path.parent.mkdir(parents=True, exist_ok=True)
+            except (PermissionError, OSError):
+                fallback_path = Path('./data') / db_path.name
+                fallback_path.parent.mkdir(parents=True, exist_ok=True)
+                url = f'sqlite:///{fallback_path.as_posix()}'
+
         _engine = create_engine(url, pool_pre_ping=True,
                                 connect_args={'timeout': 15} if url.startswith('sqlite:') else {},
                                 **({'poolclass': StaticPool} if url.endswith('/:memory:') else {}))
@@ -225,6 +232,11 @@ def schema_statements():
             state TEXT NOT NULL DEFAULT 'pending', draft_id TEXT,
             created_at TEXT NOT NULL, reviewed_at TEXT)""",
         'CREATE INDEX IF NOT EXISTS idx_improvement_agent ON agent_improvement_proposals(agent_id,state,created_at)',
+        """CREATE TABLE IF NOT EXISTS agent_integrations (
+            agent_id TEXT NOT NULL, integration_id TEXT NOT NULL,
+            enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL,
+            PRIMARY KEY (agent_id, integration_id))""",
+        'CREATE INDEX IF NOT EXISTS idx_agent_integrations_provider ON agent_integrations(integration_id, enabled)',
 
     ]
 
@@ -334,3 +346,27 @@ def add_event(call_id, type_, content, speaker=None):
 def purge_expired(days):
     before = (datetime.now(timezone.utc) - timedelta(days=max(1,days))).isoformat()
     execute('DELETE FROM events WHERE created_at < ?', (before,))
+
+
+def get_agent_integrations(agent_id: str) -> list[str]:
+    rows = many('SELECT integration_id FROM agent_integrations WHERE agent_id=? AND enabled=1 ORDER BY integration_id', (agent_id,))
+    return [r['integration_id'] for r in rows]
+
+
+def set_agent_integrations(agent_id: str, integration_ids: list[str]):
+    with connect() as c:
+        c.execute('DELETE FROM agent_integrations WHERE agent_id=?', (agent_id,))
+        for i_id in sorted(set(integration_ids)):
+            c.execute('INSERT INTO agent_integrations (agent_id, integration_id, enabled, created_at) VALUES (?,?,1,?)',
+                      (agent_id, i_id, now()))
+
+
+def get_integration_agents(integration_id: str) -> list[str]:
+    rows = many('SELECT agent_id FROM agent_integrations WHERE integration_id=? AND enabled=1 ORDER BY agent_id', (integration_id,))
+    return [r['agent_id'] for r in rows]
+
+
+def count_integration_agents(integration_id: str) -> int:
+    row = one('SELECT COUNT(*) AS n FROM agent_integrations WHERE integration_id=? AND enabled=1', (integration_id,))
+    return int(row['n']) if row else 0
+

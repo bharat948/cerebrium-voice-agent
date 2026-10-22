@@ -129,7 +129,7 @@ def test_live_session_tool_contract(setup):
     ks = next(t for t in tools if t['name'] == 'knowledge_search')
     assert ks['parameters']['properties'] == {'query': {'type': 'string'}}
     assert ks['parameters']['required'] == ['query']
-    assert ks['description'] == 'Search the agent authorized document knowledge base' 
+    assert ks['description'] == 'Search the agent authorized document knowledge base'
 
 
 def test_advanced_api_requires_auth(setup):

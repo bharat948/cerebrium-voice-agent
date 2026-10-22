@@ -31,12 +31,13 @@ $('auth-form').addEventListener('submit', async(e)=>{
 });
 $('logout-btn').addEventListener('click',async()=>{await fetch('/auth/logout',{method:'POST'}); state.authenticated=false;state.key='';sessionStorage.removeItem('vf_key');$('app').hidden=true;$('auth-overlay').hidden=false;$('auth-input').value='';});
 function navigate(page){
-  if(!['dashboard','compose','history','agents','contacts','missions','voice-lab','knowledge','operations','calendar','settings'].includes(page))return;
+  if(!['dashboard','compose','history','agents','contacts','missions','voice-lab','knowledge','operations','calendar','integrations','settings'].includes(page))return;
   state.page=page;
   document.querySelectorAll('.page').forEach(el=>el.hidden=el.id!==`page-${page}`);
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.toggle('active',el.dataset.page===page));
-  $('breadcrumb').textContent=({dashboard:'Overview',compose:'Call studio',history:'Call history',agents:'Agent Studio',contacts:'Contacts',missions:'Missions','voice-lab':'Voice Lab',knowledge:'Knowledge',operations:'Operations',calendar:'Calendar',settings:'Configuration'})[page];
+  $('breadcrumb').textContent=({dashboard:'Overview',compose:'Call studio',history:'Call history',agents:'Agent Studio',contacts:'Contacts',missions:'Missions','voice-lab':'Voice Lab',knowledge:'Knowledge',operations:'Operations',calendar:'Calendar',integrations:'Integrations',settings:'Configuration'})[page];
   if(page==='history') renderCallDetail();
+  if(page==='integrations') renderIntegrations();
   location.hash=page;
 }
 document.addEventListener('click',(e)=>{
@@ -190,6 +191,22 @@ document.addEventListener('click',async(e)=>{
    $('studio-pace').value=b.pace||'adaptive';$('studio-initiative').value=b.initiative||'guided';
    $('studio-expression').value=b.expression||'balanced';$('studio-pause').value=b.pause_tolerance||'patient';
    $('studio-interrupt').value=b.interruption_sensitivity||'normal';
+
+   // Populate integration access checkboxes
+   const activeIntegrations = c.integrations || [];
+   try {
+     const allIntegrations = await api('/api/v3/integrations');
+     const activeList = allIntegrations.filter(i => i.status === 'active');
+     $('studio-integrations-checkboxes').innerHTML = activeList.length ? activeList.map(i => `
+       <label>
+         <input type="checkbox" name="studio_integration" value="${safe(i.id)}" ${activeIntegrations.includes(i.id)?'checked':''}>
+         <span>${safe(i.name)} ${i.connected ? '<small class="tag-badge">Connected</small>' : '<small class="tag-badge muted">Offline</small>'}</span>
+       </label>
+     `).join('') : '<span class="muted tiny">No active integrations found. Connect services in the Integrations hub.</span>';
+   } catch {
+     $('studio-integrations-checkboxes').innerHTML = '<span class="muted tiny">Could not load integrations list.</span>';
+   }
+
    $('studio-editor').hidden=false;
    $('prompt-preview').hidden=true;
    $('studio-editor').scrollIntoView({behavior:'smooth',block:'nearest'});
@@ -202,7 +219,9 @@ $('studio-preview').addEventListener('click',async()=>{
 });
 $('studio-form').addEventListener('submit',async(e)=>{
  e.preventDefault();if(!studioAgentId)return;
+ const selectedIntegrations = Array.from(document.querySelectorAll('input[name="studio_integration"]:checked')).map(cb=>cb.value);
  const changes={personality:$('studio-personality').value.trim(),voice:$('studio-voice').value.trim(),language:$('studio-language').value.trim(),access:$('studio-access').value,
+ integrations:selectedIntegrations,
  behavior_policy:{pace:$('studio-pace').value,initiative:$('studio-initiative').value,expression:$('studio-expression').value,pause_tolerance:$('studio-pause').value,interruption_sensitivity:$('studio-interrupt').value}};
  try{
   const draft=await api(`/api/v3/agents/${studioAgentId}/drafts`,{method:'POST',body:JSON.stringify({changes})});
@@ -664,3 +683,142 @@ $('voice-agent')?.addEventListener('change',renderSelectedVoiceAgent);
 $('voice-clear-btn')?.addEventListener('click',clearVoiceTranscript);
 
 $('contact-select').addEventListener('change',()=>{const contact=state.contacts.find(c=>c.id===$('contact-select').value);if(contact)$('phone-input').value=contact.phone;});
+
+
+/* Integrations Hub Implementation */
+async function renderIntegrations() {
+  const grid = $('integrations-grid');
+  if(!grid) return;
+  grid.innerHTML = '<div class="muted small">Loading integrations...</div>';
+  try {
+    const list = await api('/api/v3/integrations');
+    grid.innerHTML = list.map(item => {
+      const isConnected = item.connected;
+      const isCatalog = item.status === 'catalog';
+      const statusClass = isConnected ? 'connected' : (isCatalog ? 'catalog' : 'disconnected');
+      const statusLabel = isConnected ? '● Connected' : (isCatalog ? 'Coming Soon' : '○ Not connected');
+      const icon = item.id === 'google' ? 'G' : (item.id === 'linear' ? 'L' : (item.id === 'outlook' ? 'O' : (item.id === 'teams' ? 'T' : (item.id === 'notion' ? 'N' : 'J'))));
+
+      const toolsHtml = item.tools && item.tools.length ? `
+        <div class="integration-tools-wrap">
+          <span class="integration-tools-label">Available Agent Tools (${item.tools.length})</span>
+          <div class="integration-tools">
+            ${item.tools.map(t => `<span class="tool-tag ${t.is_write?'write':''}" title="${safe(t.description)}">${safe(t.name)}</span>`).join('')}
+          </div>
+        </div>
+      ` : (isCatalog ? '<p class="muted tiny">Native connector template ready for activation.</p>' : '<p class="muted tiny">No tools registered.</p>');
+
+      const buttonHtml = isConnected ? `
+        <button class="btn outline small" data-disconnect-integration="${safe(item.id)}" type="button">Disconnect</button>
+      ` : (isCatalog ? `
+        <button class="btn outline small" disabled style="opacity:0.4" type="button">Catalog</button>
+      ` : `
+        <button class="btn primary small" data-connect-integration="${safe(item.id)}" data-integration-name="${safe(item.name)}" data-auth-type="${safe(item.auth_type)}" type="button">Connect ↗</button>
+      `);
+
+      return `
+        <div class="integration-card" data-provider-card="${safe(item.id)}">
+          <div class="integration-card-head">
+            <div class="integration-brand">
+              <div class="integration-icon">${icon}</div>
+              <div class="integration-meta">
+                <h3 class="integration-name">${safe(item.name)}</h3>
+                <span class="integration-cat">${safe(item.category)} · ${safe(item.auth_type)}</span>
+              </div>
+            </div>
+            <span class="status-chip ${statusClass}">${statusLabel}</span>
+          </div>
+          <p class="integration-desc">${safe(item.description)}</p>
+          ${toolsHtml}
+          <div class="integration-card-actions">
+            <span class="permitted-count"><strong>${item.permitted_agents_count || 0}</strong> agents assigned</span>
+            ${buttonHtml}
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch(err) {
+    grid.innerHTML = `<div class="error-msg">Failed to load integrations: ${safe(err.message)}</div>`;
+  }
+}
+
+// Integration connect/disconnect events
+document.addEventListener('click', async (e) => {
+  const connBtn = e.target.closest('[data-connect-integration]');
+  if(connBtn) {
+    const providerId = connBtn.dataset.connectIntegration;
+    const providerName = connBtn.dataset.integrationName;
+    const authType = connBtn.dataset.authType;
+    $('connect-provider-id').value = providerId;
+    $('connect-modal-title').textContent = `Connect ${providerName}`;
+    const fields = $('connect-fields');
+    if(authType === 'api_key') {
+      fields.innerHTML = `
+        <label>API Key / Personal Access Token
+          <input id="connect-api-key" type="password" required placeholder="Paste your API key" autocomplete="off" />
+        </label>
+        <label>Default Team Identifier (optional)
+          <input id="connect-team" placeholder="e.g. ENG" value="ENG" />
+        </label>
+      `;
+      $('connect-modal-hint').textContent = 'Your API token is encrypted with Fernet at rest and is never exposed to browser context.';
+    } else {
+      fields.innerHTML = `
+        <p class="muted small">Google Workspace uses OAuth 2.0 authorization. In demo mode or test runs, enter an access token or connect via Google OAuth.</p>
+        <label>Access Token (or test token)
+          <input id="connect-api-key" type="text" value="demo-oauth-token" required />
+        </label>
+      `;
+      $('connect-modal-hint').textContent = 'Live OAuth sessions store refresh tokens encrypted at rest.';
+    }
+    $('integration-connect-modal').hidden = false;
+    return;
+  }
+
+  const disBtn = e.target.closest('[data-disconnect-integration]');
+  if(disBtn) {
+    const providerId = disBtn.dataset.disconnectIntegration;
+    if(!confirm(`Disconnect ${providerId} and revoke stored credentials?`)) return;
+    try {
+      await api(`/api/v3/integrations/${providerId}/disconnect`, { method: 'POST' });
+      toast(`Disconnected ${providerId}`);
+      await renderIntegrations();
+    } catch(err) {
+      toast(err.message, true);
+    }
+    return;
+  }
+
+  if(e.target.id === 'connect-modal-close' || e.target.id === 'connect-modal-cancel' || e.target.id === 'integration-connect-modal') {
+    $('integration-connect-modal').hidden = true;
+    return;
+  }
+
+  if(e.target.id === 'integrations-refresh') {
+    renderIntegrations();
+    return;
+  }
+});
+
+const connectForm = $('integration-connect-form');
+if(connectForm) {
+  connectForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const providerId = $('connect-provider-id').value;
+    const key = $('connect-api-key').value.trim();
+    const teamEl = $('connect-team');
+    const team = teamEl ? teamEl.value.trim() : undefined;
+    try {
+      const payload = { api_key: key, access_token: key, default_team: team };
+      await api(`/api/v3/integrations/${providerId}/connect`, {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      $('integration-connect-modal').hidden = true;
+      toast(`Successfully connected ${providerId}!`);
+      await renderIntegrations();
+    } catch(err) {
+      toast(err.message, true);
+    }
+  });
+}
