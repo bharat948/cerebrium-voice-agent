@@ -625,15 +625,7 @@ $('voice-start').addEventListener('click',async()=>{
           
           const turnDiv=document.createElement('div');
           turnDiv.className=`voice-chat-turn ${speaker}`;
-          turnDiv.innerHTML=`
-            <div class="voice-chat-meta">
-              <span class="voice-chat-avatar">${avatarLetter}</span>
-              <strong class="voice-chat-name">${safe(displayName)}</strong>
-              <span class="voice-chat-time">${timeStr}</span>
-            </div>
-            <div class="voice-chat-bubble">
-              <span class="voice-chat-text"></span><span class="streaming-pulse" aria-hidden="true"></span>
-            </div>`;
+          turnDiv.innerHTML=`<div class="voice-chat-meta"><span class="voice-chat-avatar">${avatarLetter}</span><strong class="voice-chat-name">${safe(displayName)}</strong><span class="voice-chat-time">${timeStr}</span></div><div class="voice-chat-bubble"><span class="voice-chat-text"></span><span class="streaming-pulse" aria-hidden="true"></span></div>`;
           
           feed.append(turnDiv);
           voiceTranscriptState.currentSpeaker=speaker;
@@ -643,12 +635,15 @@ $('voice-start').addEventListener('click',async()=>{
         
         const textEl=voiceTranscriptState.currentBubbleTextEl;
         const currentText=textEl.textContent;
+        const cleanDelta=currentText.length===0 ? delta.trimStart() : delta;
+        if(!cleanDelta) return;
+        
         const needsSpace=currentText.length>0 &&
           !/\s$/.test(currentText) &&
-          !/^\s/.test(delta) &&
-          !/^[.,!?;:'")\]]/.test(delta);
+          !/^\s/.test(cleanDelta) &&
+          !/^[.,!?;:'")\]]/.test(cleanDelta);
           
-        textEl.textContent+=(needsSpace?' ':'')+delta;
+        textEl.textContent+=(needsSpace?' ':'')+cleanDelta;
         voiceTranscriptState.lastDeltaTime=now;
         feed.scrollTop=feed.scrollHeight;
       }else if(msg.type==='error'){
@@ -763,13 +758,20 @@ document.addEventListener('click', async (e) => {
       `;
       $('connect-modal-hint').textContent = 'Your API token is encrypted with Fernet at rest and is never exposed to browser context.';
     } else {
+      const authQuery = state.key ? `?api_key=${encodeURIComponent(state.key)}` : '';
       fields.innerHTML = `
-        <p class="muted small">Google Workspace uses OAuth 2.0 authorization. In demo mode or test runs, enter an access token or connect via Google OAuth.</p>
+        <p class="muted small">Google Workspace uses OAuth 2.0 to access Gmail and Google Calendar. You can authorize with Google directly using your configured Google credentials, or provide an access token below for test/offline mode.</p>
+        <div style="margin: 14px 0;">
+          <a class="btn primary small" style="display:inline-flex;align-items:center;gap:6px;" href="/auth/google/connect${authQuery}">
+            <span>Sign in & Authorize with Google</span> <span>↗</span>
+          </a>
+        </div>
+        <div class="muted tiny" style="margin-bottom:10px;">— OR ENTER TOKEN FOR PREVIEW / TESTING —</div>
         <label>Access Token (or test token)
           <input id="connect-api-key" type="text" value="demo-oauth-token" required />
         </label>
       `;
-      $('connect-modal-hint').textContent = 'Live OAuth sessions store refresh tokens encrypted at rest.';
+      $('connect-modal-hint').textContent = 'Live OAuth sessions store refresh tokens encrypted with Fernet at rest.';
     }
     $('integration-connect-modal').hidden = false;
     return;
